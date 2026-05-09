@@ -640,6 +640,13 @@ function getSession()    { try { const s = localStorage.getItem("cnc_session"); 
 // ══════════════════════════════════════════════════════
 //  AUTH
 // ══════════════════════════════════════════════════════
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))
+  ]);
+}
+
 async function doLogin() {
   const uid = document.getElementById("login-user").value.trim().toLowerCase();
   const pw  = document.getElementById("login-pw").value;
@@ -648,8 +655,8 @@ async function doLogin() {
   if (!uid || !pw) { err.textContent = "Please enter username and password."; err.style.display = "block"; return; }
   showLoading("Signing in...");
   try {
-    const users     = await loadUsers();
-    const passwords = await loadPasswords();
+    const users     = await withTimeout(loadUsers(), 8000);
+    const passwords = await withTimeout(loadPasswords(), 8000);
     const user      = users.find(u => u.id.toLowerCase() === uid);
     if (user && passwords[user.id] === pw) {
       currentUser = user;
@@ -664,9 +671,13 @@ async function doLogin() {
       err.style.display = "block";
     }
   } catch(e) {
-    err.textContent = "Connection error. Check internet and try again.";
+    if (e.message === "timeout") {
+      err.textContent = "Cannot reach database. Please check Firestore Rules — they must allow read/write: if true";
+    } else {
+      err.textContent = "Connection error: " + e.message;
+    }
     err.style.display = "block";
-    console.error(e);
+    console.error("Login error:", e);
   }
   hideLoading();
 }
@@ -687,7 +698,7 @@ window.addEventListener("load", async () => {
   if (!session) return;
   showLoading("Restoring session...");
   try {
-    const users = await loadUsers();
+    const users = await withTimeout(loadUsers(), 8000);
     const user  = users.find(u => u.id === session.id);
     if (user) {
       currentUser = user;
@@ -695,7 +706,10 @@ window.addEventListener("load", async () => {
       document.getElementById("app-screen").style.display   = "flex";
       await initApp();
     } else { clearSession(); }
-  } catch(e) { clearSession(); console.error(e); }
+  } catch(e) {
+    clearSession();
+    console.error("Session restore error:", e);
+  }
   hideLoading();
 });
 
