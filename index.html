@@ -472,12 +472,32 @@ tr:hover td{background:var(--surface2)}
 <!-- TOAST -->
 <div class="toast" id="toast">✓ Entry saved successfully!</div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
 // ══════════════════════════════════════════════════════
-//  DATA
+//  FIREBASE INIT
 // ══════════════════════════════════════════════════════
+const firebaseConfig = {
+  apiKey: "AIzaSyBbe71JZwuLtegIH-NeRGIE3aXVacNKvkM",
+  authDomain: "cs-expenses-5d152.firebaseapp.com",
+  projectId: "cs-expenses-5d152",
+  storageBucket: "cs-expenses-5d152.firebasestorage.app",
+  messagingSenderId: "331443830345",
+  appId: "1:331443830345:web:70dc33a3b278cfe9bb4998"
+};
 
-// Default users seeded once into localStorage
+let db;
+try {
+  firebase.initializeApp(firebaseConfig);
+} catch(e) {
+  if(e.code !== "app/duplicate-app") console.error(e);
+}
+db = firebase.firestore();
+
+// ══════════════════════════════════════════════════════
+//  CONSTANTS
+// ══════════════════════════════════════════════════════
 const DEFAULT_USERS = [
   { id:"admin",     name:"Admin",          role:"admin", location:null },
   { id:"ho_user",   name:"Head Office",    role:"user",  location:"Head Office" },
@@ -485,30 +505,6 @@ const DEFAULT_USERS = [
   { id:"khi_user",  name:"Karachi Office", role:"user",  location:"Karachi Office" },
 ];
 const DEFAULT_PASSWORDS = { admin:"admin123", ho_user:"ho123", shop_user:"shop123", khi_user:"khi123" };
-
-function loadUsers(){
-  try{
-    const u = localStorage.getItem("cnc_users");
-    if(u) return JSON.parse(u);
-    // First time — seed defaults
-    localStorage.setItem("cnc_users", JSON.stringify(DEFAULT_USERS));
-    localStorage.setItem("cnc_passwords", JSON.stringify(DEFAULT_PASSWORDS));
-    return DEFAULT_USERS;
-  }catch{ return DEFAULT_USERS; }
-}
-function saveUsers(arr){ localStorage.setItem("cnc_users", JSON.stringify(arr)); }
-function loadPasswords(){
-  try{ return JSON.parse(localStorage.getItem("cnc_passwords")||"{}"); }catch{ return {}; }
-}
-function savePasswords(obj){ localStorage.setItem("cnc_passwords", JSON.stringify(obj)); }
-
-// Init on first load
-(function seedIfNeeded(){
-  if(!localStorage.getItem("cnc_users")){
-    localStorage.setItem("cnc_users", JSON.stringify(DEFAULT_USERS));
-    localStorage.setItem("cnc_passwords", JSON.stringify(DEFAULT_PASSWORDS));
-  }
-})();
 
 const EXPENSE_STRUCTURE = {
   "Head Office": {
@@ -545,147 +541,235 @@ const EXPENSE_STRUCTURE = {
     "Admin Expenses":     ["Grocery","Repair & Maintenance","Labour for Stock","Staff Food","Printing & Stationery","Misc Expenses"],
   },
 };
-const LOCATIONS = ["Head Office","Shop","Karachi Office"];
-const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+const LOCATIONS  = ["Head Office","Shop","Karachi Office"];
+const MONTHS     = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const LOC_COLOR  = { "Head Office":"var(--ho)", "Shop":"var(--shop)", "Karachi Office":"var(--khi)" };
-const LOC_CLASS  = { "Head Office":"loc-ho",    "Shop":"loc-shop",    "Karachi Office":"loc-khi" };
-
-const PKR = n => "Rs. " + Number(n||0).toLocaleString("en-PK");
-const today = () => new Date().toISOString().split("T")[0];
+const LOC_CLASS  = { "Head Office":"loc-ho", "Shop":"loc-shop", "Karachi Office":"loc-khi" };
+const PKR        = n => "Rs. " + Number(n||0).toLocaleString("en-PK");
+const todayStr   = () => new Date().toISOString().split("T")[0];
 
 // ══════════════════════════════════════════════════════
 //  STATE
 // ══════════════════════════════════════════════════════
-let currentUser = null;
-let currentTab  = "";
-let reportTab   = "monthly";
+let currentUser   = null;
+let currentTab    = "";
+let reportTab     = "monthly";
+let allExpenses   = [];
+let unsubExpenses = null;
+let editingUserId = null;
 
-function loadExpenses(){ try{ return JSON.parse(localStorage.getItem("cnc_expenses")||"[]"); }catch{ return []; } }
-function saveExpenses(arr){ localStorage.setItem("cnc_expenses", JSON.stringify(arr)); }
+// ══════════════════════════════════════════════════════
+//  LOADING OVERLAY
+// ══════════════════════════════════════════════════════
+function showLoading(msg) {
+  let el = document.getElementById("loading-overlay");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "loading-overlay";
+    el.style.cssText = "position:fixed;inset:0;background:rgba(13,15,20,.88);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px";
+    el.innerHTML = '<div style="width:38px;height:38px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite"></div><div id="loading-msg" style="color:var(--muted);font-size:14px"></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
+    document.body.appendChild(el);
+  }
+  document.getElementById("loading-msg").textContent = msg || "Loading...";
+  el.style.display = "flex";
+}
+function hideLoading() {
+  const el = document.getElementById("loading-overlay");
+  if (el) el.style.display = "none";
+}
+
+// ══════════════════════════════════════════════════════
+//  FIREBASE HELPERS — USERS & PASSWORDS
+// ══════════════════════════════════════════════════════
+async function loadUsers() {
+  try {
+    const snap = await db.collection("settings").doc("users").get();
+    if (snap.exists && snap.data().list) return snap.data().list;
+    await db.collection("settings").doc("users").set({ list: DEFAULT_USERS });
+    await db.collection("settings").doc("passwords").set({ map: DEFAULT_PASSWORDS });
+    return DEFAULT_USERS;
+  } catch(e) { console.error("loadUsers:", e); return DEFAULT_USERS; }
+}
+async function saveUsers(arr) {
+  await db.collection("settings").doc("users").set({ list: arr });
+}
+async function loadPasswords() {
+  try {
+    const snap = await db.collection("settings").doc("passwords").get();
+    if (snap.exists && snap.data().map) return snap.data().map;
+    await db.collection("settings").doc("passwords").set({ map: DEFAULT_PASSWORDS });
+    return DEFAULT_PASSWORDS;
+  } catch(e) { console.error("loadPasswords:", e); return {}; }
+}
+async function savePasswords(obj) {
+  await db.collection("settings").doc("passwords").set({ map: obj });
+}
+
+// ══════════════════════════════════════════════════════
+//  FIREBASE HELPERS — EXPENSES
+// ══════════════════════════════════════════════════════
+async function addExpenseFS(entry) {
+  await db.collection("expenses").doc(String(entry.id)).set(entry);
+}
+async function deleteExpenseFS(id) {
+  await db.collection("expenses").doc(String(id)).delete();
+}
+function subscribeExpenses() {
+  if (unsubExpenses) unsubExpenses();
+  unsubExpenses = db.collection("expenses")
+    .orderBy("date", "desc")
+    .onSnapshot(snap => {
+      allExpenses = snap.docs.map(d => d.data());
+      if (currentTab === "dash")    renderDash();
+      if (currentTab === "entries") renderEntries();
+      if (currentTab === "reports") renderReports();
+      if (currentTab === "mine")    renderMine();
+      if (currentTab === "entry")   renderRecent();
+    }, err => console.error("Firestore snapshot error:", err));
+}
+
+// ══════════════════════════════════════════════════════
+//  SESSION — reload fix
+// ══════════════════════════════════════════════════════
+function saveSession(u)  { localStorage.setItem("cnc_session", JSON.stringify(u)); }
+function clearSession()  { localStorage.removeItem("cnc_session"); }
+function getSession()    { try { const s = localStorage.getItem("cnc_session"); return s ? JSON.parse(s) : null; } catch { return null; } }
 
 // ══════════════════════════════════════════════════════
 //  AUTH
 // ══════════════════════════════════════════════════════
-function doLogin(){
+async function doLogin() {
   const uid = document.getElementById("login-user").value.trim().toLowerCase();
   const pw  = document.getElementById("login-pw").value;
   const err = document.getElementById("login-err");
-  const users = loadUsers();
-  const passwords = loadPasswords();
-  const user = users.find(u => u.id.toLowerCase() === uid);
-  if(user && passwords[user.id] === pw){
-    err.style.display = "none";
-    currentUser = user;
-    document.getElementById("login-screen").style.display = "none";
-    document.getElementById("app-screen").style.display   = "flex";
-    document.getElementById("login-pw").value = "";
-    document.getElementById("login-user").value = "";
-    initApp();
-  } else {
+  err.style.display = "none";
+  if (!uid || !pw) { err.textContent = "Please enter username and password."; err.style.display = "block"; return; }
+  showLoading("Signing in...");
+  try {
+    const users     = await loadUsers();
+    const passwords = await loadPasswords();
+    const user      = users.find(u => u.id.toLowerCase() === uid);
+    if (user && passwords[user.id] === pw) {
+      currentUser = user;
+      saveSession(user);
+      document.getElementById("login-screen").style.display = "none";
+      document.getElementById("app-screen").style.display   = "flex";
+      document.getElementById("login-pw").value   = "";
+      document.getElementById("login-user").value = "";
+      await initApp();
+    } else {
+      err.textContent = "Incorrect username or password.";
+      err.style.display = "block";
+    }
+  } catch(e) {
+    err.textContent = "Connection error. Check internet and try again.";
     err.style.display = "block";
+    console.error(e);
   }
+  hideLoading();
 }
 
-function doLogout(){
+function doLogout() {
+  if (unsubExpenses) { unsubExpenses(); unsubExpenses = null; }
+  clearSession();
   currentUser = null;
+  allExpenses = [];
+  currentTab  = "";
   document.getElementById("app-screen").style.display   = "none";
   document.getElementById("login-screen").style.display = "flex";
 }
 
+// Auto restore session on page load
+window.addEventListener("load", async () => {
+  const session = getSession();
+  if (!session) return;
+  showLoading("Restoring session...");
+  try {
+    const users = await loadUsers();
+    const user  = users.find(u => u.id === session.id);
+    if (user) {
+      currentUser = user;
+      document.getElementById("login-screen").style.display = "none";
+      document.getElementById("app-screen").style.display   = "flex";
+      await initApp();
+    } else { clearSession(); }
+  } catch(e) { clearSession(); console.error(e); }
+  hideLoading();
+});
+
 // ══════════════════════════════════════════════════════
 //  APP INIT
 // ══════════════════════════════════════════════════════
-function initApp(){
+async function initApp() {
+  subscribeExpenses();
   const isAdmin = currentUser.role === "admin";
-
-  // Badge
-  const badge = document.getElementById("nav-badge");
-  badge.textContent = currentUser.name;
+  const badge   = document.getElementById("nav-badge");
+  badge.textContent   = currentUser.name;
   badge.style.borderColor = isAdmin ? "var(--accent)" : LOC_COLOR[currentUser.location];
   badge.style.color        = isAdmin ? "var(--accent)" : LOC_COLOR[currentUser.location];
 
-  // Sidebar
   const nav = isAdmin
     ? [["dash","Dashboard","dash"],["entries","All Entries","list"],["reports","Reports","chart"],["users","Users","users"],["changepw","My Password","lock"]]
     : [["entry","New Entry","plus"],["mine","My Entries","list"],["changepw","My Password","lock"]];
 
   const ICONS = {
-    dash:  `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>`,
-    list:  `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
-    chart: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>`,
-    plus:  `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>`,
-    users: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
-    lock:  `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+    dash:  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
+    list:  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+    chart: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>',
+    plus:  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+    users: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    lock:  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
   };
 
   document.getElementById("sidebar").innerHTML = nav.map(([id, label, icon]) =>
     `<div class="sidebar-item" id="nav-${id}" onclick="switchTab('${id}')">${ICONS[icon]}<span>${label}</span></div>`
   ).join("");
 
-  // Setup entry form
-  if(!isAdmin){
+  if (!isAdmin) {
     const loc = currentUser.location;
     document.getElementById("entry-loc-label").textContent = loc;
     document.getElementById("entry-loc-label").style.color = LOC_COLOR[loc];
     document.getElementById("mine-loc-label").textContent  = loc;
     document.getElementById("mine-loc-label").style.color  = LOC_COLOR[loc];
-    document.getElementById("e-date").value = today();
-
+    document.getElementById("e-date").value = todayStr();
     const cats = EXPENSE_STRUCTURE[loc];
-    const catSel = document.getElementById("e-cat");
-    catSel.innerHTML = Object.keys(cats).map(c => `<option>${c}</option>`).join("");
+    document.getElementById("e-cat").innerHTML = Object.keys(cats).map(c => `<option>${c}</option>`).join("");
     updateSubcats();
   }
-
-  // Year picker for reports
-  if(isAdmin){
-    const expenses = loadExpenses();
-    const years = [...new Set(expenses.map(e => e.date.slice(0,4)))].sort().reverse();
-    const yr = new Date().getFullYear().toString();
-    const allYears = years.includes(yr) ? years : [yr, ...years];
-    document.getElementById("r-year").innerHTML = allYears.map(y => `<option>${y}</option>`).join("");
-
-    // Category filter for entries
-    const cats = [...new Set(expenses.map(e => e.category))].sort();
-    const cf = document.getElementById("f-cat");
-    cf.innerHTML = `<option value="All">All Categories</option>` + cats.map(c => `<option>${c}</option>`).join("");
-  }
-
   switchTab(isAdmin ? "dash" : "entry");
 }
 
-function switchTab(tab){
+function switchTab(tab) {
   currentTab = tab;
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
   document.querySelectorAll(".sidebar-item").forEach(i => i.classList.remove("active"));
-  const pg = document.getElementById("page-"+tab);
-  const ni = document.getElementById("nav-"+tab);
-  if(pg) pg.classList.add("active");
-  if(ni) ni.classList.add("active");
-
-  if(tab==="dash")     renderDash();
-  if(tab==="entries")  renderEntries();
-  if(tab==="reports")  renderReports();
-  if(tab==="mine")     renderMine();
-  if(tab==="entry")    renderRecent();
-  if(tab==="users")    renderUsers();
-  if(tab==="changepw") initChangePw();
+  const pg = document.getElementById("page-" + tab);
+  const ni = document.getElementById("nav-" + tab);
+  if (pg) pg.classList.add("active");
+  if (ni) ni.classList.add("active");
+  if (tab === "dash")     renderDash();
+  if (tab === "entries")  renderEntries();
+  if (tab === "reports")  renderReports();
+  if (tab === "mine")     renderMine();
+  if (tab === "entry")    renderRecent();
+  if (tab === "users")    renderUsers();
+  if (tab === "changepw") initChangePw();
 }
 
 // ══════════════════════════════════════════════════════
 //  ENTRY FORM
 // ══════════════════════════════════════════════════════
-function updateSubcats(){
+function updateSubcats() {
   const loc  = currentUser.location;
   const cat  = document.getElementById("e-cat").value;
   const subs = EXPENSE_STRUCTURE[loc][cat] || [];
   document.getElementById("e-sub").innerHTML = subs.map(s => `<option>${s}</option>`).join("");
 }
 
-function saveEntry(){
+async function saveEntry() {
   const amt = parseFloat(document.getElementById("e-amount").value);
-  if(!amt || amt <= 0){ document.getElementById("e-amount").focus(); return; }
+  if (!amt || amt <= 0) { document.getElementById("e-amount").focus(); return; }
   const entry = {
     id:          Date.now(),
     location:    currentUser.location,
@@ -696,30 +780,23 @@ function saveEntry(){
     note:        document.getElementById("e-note").value,
     enteredBy:   currentUser.name,
   };
-  const arr = loadExpenses();
-  arr.unshift(entry);
-  saveExpenses(arr);
   document.getElementById("e-amount").value = "";
   document.getElementById("e-note").value   = "";
   showToast();
-  renderRecent();
+  await addExpenseFS(entry);
 }
 
-function renderRecent(){
-  const loc     = currentUser.location;
-  const entries = loadExpenses().filter(e => e.location === loc).slice(0, 10);
-  const el      = document.getElementById("recent-entries-table");
-  if(!entries.length){
-    el.innerHTML = `<div class="empty"><div class="empty-icon">📋</div>No entries yet</div>`;
-    return;
-  }
+function renderRecent() {
+  const entries = allExpenses.filter(e => e.location === currentUser.location).slice(0, 10);
+  const el = document.getElementById("recent-entries-table");
+  if (!entries.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No entries yet</div>'; return; }
   el.innerHTML = `<div class="card table-wrap"><table>
     <thead><tr><th>Date</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th></tr></thead>
     <tbody>${entries.map(e => `<tr>
       <td>${e.date}</td><td>${e.category}</td>
       <td style="color:var(--muted)">${e.subcategory}</td>
       <td style="font-family:Syne,sans-serif;font-weight:600">${PKR(e.amount)}</td>
-      <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
+      <td style="color:var(--muted);font-size:13px">${e.note || "—"}</td>
     </tr>`).join("")}</tbody>
   </table></div>`;
 }
@@ -727,34 +804,27 @@ function renderRecent(){
 // ══════════════════════════════════════════════════════
 //  MY ENTRIES
 // ══════════════════════════════════════════════════════
-function renderMine(){
+function renderMine() {
   const loc   = currentUser.location;
-  const mine  = loadExpenses().filter(e => e.location === loc);
-  const total = mine.reduce((s,e)=>s+e.amount,0);
-  const thisM = new Date().toISOString().slice(0,7);
-  const mtd   = mine.filter(e=>e.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
-
+  const mine  = allExpenses.filter(e => e.location === loc);
+  const total = mine.reduce((s, e) => s + e.amount, 0);
+  const thisM = new Date().toISOString().slice(0, 7);
+  const mtd   = mine.filter(e => e.date.startsWith(thisM)).reduce((s, e) => s + e.amount, 0);
   document.getElementById("mine-cards").innerHTML = `
     <div class="card"><div class="card-title">Total Entries</div><div class="card-val">${mine.length}</div></div>
     <div class="card"><div class="card-title">Total Amount</div><div class="card-val" style="color:${LOC_COLOR[loc]}">${PKR(total)}</div></div>
-    <div class="card"><div class="card-title">This Month</div><div class="card-val" style="color:var(--success)">${PKR(mtd)}</div></div>
-  `;
-
+    <div class="card"><div class="card-title">This Month</div><div class="card-val" style="color:var(--success)">${PKR(mtd)}</div></div>`;
   const el = document.getElementById("mine-table");
-  if(!mine.length){
-    el.innerHTML = `<div class="empty"><div class="empty-icon">📋</div>No entries yet</div>`;
-    return;
-  }
+  if (!mine.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No entries yet</div>'; return; }
+  const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
   el.innerHTML = `<div class="card table-wrap"><table>
     <thead><tr><th>Date</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th><th></th></tr></thead>
-    <tbody>${mine.map(e=>`<tr>
+    <tbody>${mine.map(e => `<tr>
       <td>${e.date}</td><td>${e.category}</td>
       <td style="color:var(--muted)">${e.subcategory}</td>
       <td style="font-family:Syne,sans-serif;font-weight:600">${PKR(e.amount)}</td>
-      <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
-      <td><button class="btn-danger" onclick="deleteEntry(${e.id})">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-      </button></td>
+      <td style="color:var(--muted);font-size:13px">${e.note || "—"}</td>
+      <td><button class="btn-danger" onclick="deleteEntry(${e.id})">${TRASH}</button></td>
     </tr>`).join("")}</tbody>
   </table></div>`;
 }
@@ -762,85 +832,67 @@ function renderMine(){
 // ══════════════════════════════════════════════════════
 //  ADMIN DASHBOARD
 // ══════════════════════════════════════════════════════
-function renderDash(){
-  const expenses = loadExpenses();
-  const total    = expenses.reduce((s,e)=>s+e.amount,0);
-  const thisM    = new Date().toISOString().slice(0,7);
-  const mtd      = expenses.filter(e=>e.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
-  const byLoc    = LOCATIONS.map(l=>({ l, t: expenses.filter(e=>e.location===l).reduce((s,e)=>s+e.amount,0) }));
-
+function renderDash() {
+  const expenses = allExpenses;
+  const total = expenses.reduce((s, e) => s + e.amount, 0);
+  const thisM = new Date().toISOString().slice(0, 7);
+  const mtd   = expenses.filter(e => e.date.startsWith(thisM)).reduce((s, e) => s + e.amount, 0);
+  const byLoc = LOCATIONS.map(l => ({ l, t: expenses.filter(e => e.location === l).reduce((s, e) => s + e.amount, 0) }));
   document.getElementById("dash-cards").innerHTML =
     `<div class="card"><div class="card-title">Total Expenses</div><div class="card-val" style="color:var(--accent)">${PKR(total)}</div></div>
      <div class="card"><div class="card-title">This Month (MTD)</div><div class="card-val" style="color:var(--success)">${PKR(mtd)}</div></div>`
-    + byLoc.map(({l,t})=>
-    `<div class="card"><div class="card-title">${l}</div><div class="card-val" style="color:${LOC_COLOR[l]}">${PKR(t)}</div></div>`
-    ).join("");
-
-  // Location bar chart
-  document.getElementById("dash-loc-chart").innerHTML = byLoc.map(({l,t})=>`
-    <div class="bar-row">
-      <div class="bar-label">${l}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${total?(t/total*100):0}%;background:${LOC_COLOR[l]}"></div></div>
-      <div class="bar-val">${PKR(t)}</div>
-    </div>`).join("");
-
-  // Category bar chart
+    + byLoc.map(({l, t}) => `<div class="card"><div class="card-title">${l}</div><div class="card-val" style="color:${LOC_COLOR[l]}">${PKR(t)}</div></div>`).join("");
+  document.getElementById("dash-loc-chart").innerHTML = byLoc.map(({l, t}) => `
+    <div class="bar-row"><div class="bar-label">${l}</div>
+    <div class="bar-track"><div class="bar-fill" style="width:${total ? (t/total*100) : 0}%;background:${LOC_COLOR[l]}"></div></div>
+    <div class="bar-val">${PKR(t)}</div></div>`).join("");
   const byCat = {};
-  expenses.forEach(e=>{ byCat[e.category]=(byCat[e.category]||0)+e.amount; });
-  const top = Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,8);
-  const maxC = top[0]?.[1]||1;
-  document.getElementById("dash-cat-chart").innerHTML = top.map(([c,a])=>`
-    <div class="bar-row">
-      <div class="bar-label">${c}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${a/maxC*100}%;background:var(--accent)"></div></div>
-      <div class="bar-val">${PKR(a)}</div>
-    </div>`).join("") || `<div style="color:var(--muted);font-size:13px">No data yet</div>`;
+  expenses.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
+  const top  = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const maxC = top[0] ? top[0][1] : 1;
+  document.getElementById("dash-cat-chart").innerHTML = top.map(([cat, amt]) => `
+    <div class="bar-row"><div class="bar-label">${cat}</div>
+    <div class="bar-track"><div class="bar-fill" style="width:${amt/maxC*100}%;background:var(--accent)"></div></div>
+    <div class="bar-val">${PKR(amt)}</div></div>`).join("") || '<div style="color:var(--muted);font-size:13px">No data yet</div>';
 }
 
 // ══════════════════════════════════════════════════════
 //  ALL ENTRIES
 // ══════════════════════════════════════════════════════
-function renderEntries(){
-  const expenses = loadExpenses();
+function renderEntries() {
+  const expenses = allExpenses;
   const locF   = document.getElementById("f-loc").value;
   const catF   = document.getElementById("f-cat").value;
   const fromD  = document.getElementById("f-from").value;
   const toD    = document.getElementById("f-to").value;
   const search = document.getElementById("f-search").value.toLowerCase();
-
-  // Refresh category options
-  const allCats = [...new Set(expenses.map(e=>e.category))].sort();
-  const cf = document.getElementById("f-cat");
+  const allCats = [...new Set(expenses.map(e => e.category))].sort();
+  const cf   = document.getElementById("f-cat");
   const prev = cf.value;
-  cf.innerHTML = `<option value="All">All Categories</option>` + allCats.map(c=>`<option>${c}</option>`).join("");
+  cf.innerHTML = '<option value="All">All Categories</option>' + allCats.map(c => `<option>${c}</option>`).join("");
   cf.value = prev;
-
-  const filtered = expenses.filter(e=>{
-    if(locF!=="All" && e.location!==locF) return false;
-    if(catF!=="All" && e.category!==catF) return false;
-    if(fromD && e.date < fromD) return false;
-    if(toD   && e.date > toD)   return false;
-    if(search && !JSON.stringify(e).toLowerCase().includes(search)) return false;
+  const filtered = expenses.filter(e => {
+    if (locF !== "All" && e.location !== locF) return false;
+    if (catF !== "All" && e.category !== catF) return false;
+    if (fromD && e.date < fromD) return false;
+    if (toD   && e.date > toD)   return false;
+    if (search && !JSON.stringify(e).toLowerCase().includes(search)) return false;
     return true;
   });
-  const total = filtered.reduce((s,e)=>s+e.amount,0);
-  document.getElementById("entries-sub").textContent = `${filtered.length} entries • ${PKR(total)} total`;
-
+  const total = filtered.reduce((s, e) => s + e.amount, 0);
+  document.getElementById("entries-sub").textContent = filtered.length + " entries • " + PKR(total) + " total";
   const el = document.getElementById("entries-table");
-  if(!filtered.length){
-    el.innerHTML = `<div class="empty"><div class="empty-icon">🔍</div>No entries found</div>`;
-    return;
-  }
-  const TRASH = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>`;
+  if (!filtered.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">🔍</div>No entries found</div>'; return; }
+  const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
   el.innerHTML = `<div class="card table-wrap"><table>
     <thead><tr><th>Date</th><th>Location</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th><th>By</th><th></th></tr></thead>
-    <tbody>${filtered.map(e=>`<tr>
+    <tbody>${filtered.map(e => `<tr>
       <td>${e.date}</td>
       <td><span class="loc-badge ${LOC_CLASS[e.location]}">${e.location}</span></td>
       <td>${e.category}</td>
       <td style="color:var(--muted)">${e.subcategory}</td>
       <td style="font-family:Syne,sans-serif;font-weight:600">${PKR(e.amount)}</td>
-      <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
+      <td style="color:var(--muted);font-size:13px">${e.note || "—"}</td>
       <td style="color:var(--muted);font-size:12px">${e.enteredBy}</td>
       <td><button class="btn-danger" onclick="deleteEntry(${e.id})">${TRASH}</button></td>
     </tr>`).join("")}</tbody>
@@ -850,325 +902,211 @@ function renderEntries(){
 // ══════════════════════════════════════════════════════
 //  REPORTS
 // ══════════════════════════════════════════════════════
-function setReportTab(t){
+function setReportTab(t) {
   reportTab = t;
-  ["monthly","category","location"].forEach(x=>{
-    document.getElementById("rtab-"+x).classList.toggle("active", x===t);
-  });
+  ["monthly","category","location"].forEach(x => document.getElementById("rtab-"+x).classList.toggle("active", x === t));
   renderReports();
 }
 
-function renderReports(){
-  const expenses = loadExpenses();
+function renderReports() {
+  const expenses = allExpenses;
   const yearF = document.getElementById("r-year").value;
   const locF  = document.getElementById("r-loc").value;
-
-  // Refresh year options
-  const years = [...new Set(expenses.map(e=>e.date.slice(0,4)))].sort().reverse();
-  const allYears = years.includes(yearF) ? years : [yearF,...years];
-  const yr = document.getElementById("r-year");
-  yr.innerHTML = allYears.map(y=>`<option${y===yearF?" selected":""}>${y}</option>`).join("");
-
-  const filtered = expenses.filter(e=>{
-    if(locF!=="All" && e.location!==locF) return false;
-    if(!e.date.startsWith(yearF)) return false;
+  const years = [...new Set(expenses.map(e => e.date.slice(0,4)))].sort().reverse();
+  const allYrs = years.includes(yearF) ? years : [yearF, ...years];
+  document.getElementById("r-year").innerHTML = allYrs.map(y => `<option${y===yearF?" selected":""}>${y}</option>`).join("");
+  const filtered = expenses.filter(e => {
+    if (locF !== "All" && e.location !== locF) return false;
+    if (!e.date.startsWith(yearF)) return false;
     return true;
   });
-  const totalFiltered = filtered.reduce((s,e)=>s+e.amount,0);
+  const totalF = filtered.reduce((s, e) => s + e.amount, 0);
   const el = document.getElementById("report-content");
 
-  if(reportTab==="monthly"){
-    const monthly = Array.from({length:12},(_,i)=>{
+  if (reportTab === "monthly") {
+    const monthly = Array.from({length:12}, (_, i) => {
       const m = String(i+1).padStart(2,"0");
-      const t = filtered.filter(e=>e.date.slice(5,7)===m).reduce((s,e)=>s+e.amount,0);
-      return {month:MONTHS[i], t};
+      const t = filtered.filter(e => e.date.slice(5,7) === m).reduce((s,e) => s+e.amount, 0);
+      return { month: MONTHS[i], t };
     });
-    const maxM = Math.max(...monthly.map(m=>m.t),1);
+    const maxM = Math.max(...monthly.map(m => m.t), 1);
     el.innerHTML = `<div class="card">
       <div class="section-title">Monthly Expenses — ${yearF}</div>
-      <div class="bar-chart">${monthly.map(({month,t})=>`
+      <div class="bar-chart">${monthly.map(({month,t}) => `
         <div class="bar-row">
           <div class="bar-label" style="width:40px;text-align:left">${month}</div>
           <div class="bar-track"><div class="bar-fill" style="width:${t/maxM*100}%;background:linear-gradient(90deg,var(--accent),#f87171)"></div></div>
-          <div class="bar-val">${t>0?PKR(t):`<span style="color:var(--muted)">—</span>`}</div>
-        </div>`).join("")}
-      </div>
+          <div class="bar-val">${t > 0 ? PKR(t) : '<span style="color:var(--muted)">—</span>'}</div>
+        </div>`).join("")}</div>
       <div class="divider"></div>
       <div style="display:flex;justify-content:flex-end">
-        <span style="font-family:Syne,sans-serif;font-weight:700;font-size:18px">Total: <span style="color:var(--accent)">${PKR(totalFiltered)}</span></span>
-      </div>
-    </div>`;
-  }
-
-  else if(reportTab==="category"){
+        <span style="font-family:Syne,sans-serif;font-weight:700;font-size:18px">Total: <span style="color:var(--accent)">${PKR(totalF)}</span></span>
+      </div></div>`;
+  } else if (reportTab === "category") {
     const byCat = {};
-    filtered.forEach(e=>{ byCat[e.category]=(byCat[e.category]||0)+e.amount; });
-    const rows = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
-    el.innerHTML = `<div class="card">
-      <div class="section-title">Category-wise Breakdown</div>
-      ${!rows.length ? `<div class="empty"><div class="empty-icon">📊</div>No data available</div>` :
-      `<table><thead><tr><th>Category</th><th class="tr">Total</th><th class="tr">% Share</th></tr></thead>
-      <tbody>${rows.map(([c,a])=>`<tr>
+    filtered.forEach(e => { byCat[e.category] = (byCat[e.category]||0) + e.amount; });
+    const rows = Object.entries(byCat).sort((a,b) => b[1]-a[1]);
+    el.innerHTML = `<div class="card"><div class="section-title">Category-wise Breakdown</div>
+      ${!rows.length ? '<div class="empty"><div class="empty-icon">📊</div>No data available</div>' :
+      `<table><thead><tr><th>Category</th><th style="text-align:right">Total</th><th style="text-align:right">% Share</th></tr></thead>
+      <tbody>${rows.map(([c,a]) => `<tr>
         <td>${c}</td>
-        <td class="tr" style="font-family:Syne,sans-serif;font-weight:600">${PKR(a)}</td>
-        <td class="tr" style="color:var(--accent);font-weight:600">${totalFiltered?(a/totalFiltered*100).toFixed(1):0}%</td>
+        <td style="text-align:right;font-family:Syne,sans-serif;font-weight:600">${PKR(a)}</td>
+        <td style="text-align:right;color:var(--accent);font-weight:600">${totalF ? (a/totalF*100).toFixed(1) : 0}%</td>
       </tr>`).join("")}</tbody></table>`}
     </div>`;
-  }
-
-  else if(reportTab==="location"){
-    const locMonthly = LOCATIONS.map(loc=>({
-      loc, data: Array.from({length:12},(_,i)=>{
+  } else if (reportTab === "location") {
+    const locMonthly = LOCATIONS.map(loc => ({
+      loc, data: Array.from({length:12}, (_, i) => {
         const m = String(i+1).padStart(2,"0");
-        return filtered.filter(e=>e.location===loc&&e.date.slice(5,7)===m).reduce((s,e)=>s+e.amount,0);
+        return filtered.filter(e => e.location===loc && e.date.slice(5,7)===m).reduce((s,e) => s+e.amount, 0);
       })
     }));
-    el.innerHTML = `<div class="card">
-      <div class="section-title">Location-wise Monthly (${yearF})</div>
+    el.innerHTML = `<div class="card"><div class="section-title">Location-wise Monthly (${yearF})</div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Month</th>${LOCATIONS.map(l=>`<th style="color:${LOC_COLOR[l]}">${l}</th>`).join("")}<th>Total</th></tr></thead>
-        <tbody>${MONTHS.map((m,i)=>{
-          const rowT = locMonthly.reduce((s,{data})=>s+data[i],0);
-          return `<tr><td>${m}</td>${locMonthly.map(({data})=>`<td style="font-family:Syne,sans-serif;font-weight:${data[i]>0?600:400};color:${data[i]>0?"var(--text)":"var(--muted)"}">${data[i]>0?PKR(data[i]):"—"}</td>`).join("")}
+        <thead><tr><th>Month</th>${LOCATIONS.map(l => `<th style="color:${LOC_COLOR[l]}">${l}</th>`).join("")}<th>Total</th></tr></thead>
+        <tbody>${MONTHS.map((m, i) => {
+          const rowT = locMonthly.reduce((s, {data}) => s + data[i], 0);
+          return `<tr><td>${m}</td>${locMonthly.map(({data}) => `<td style="font-family:Syne,sans-serif;font-weight:${data[i]>0?600:400};color:${data[i]>0?"var(--text)":"var(--muted)"}">${data[i]>0?PKR(data[i]):"—"}</td>`).join("")}
           <td style="font-family:Syne,sans-serif;font-weight:700;color:var(--accent)">${rowT>0?PKR(rowT):"—"}</td></tr>`;
         }).join("")}</tbody>
-      </table></div>
-    </div>`;
+      </table></div></div>`;
   }
 }
-
 
 // ══════════════════════════════════════════════════════
 //  USER MANAGEMENT
 // ══════════════════════════════════════════════════════
-let editingUserId = null;
-
-function renderUsers(){
-  const users = loadUsers();
-  const passwords = loadPasswords();
-  const TRASH = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>`;
-  const EDIT  = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
-  const KEY   = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>`;
-  const el = document.getElementById("users-table");
-  el.innerHTML = `<div class="card table-wrap"><table>
+async function renderUsers() {
+  const users = await loadUsers();
+  const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
+  const KEY   = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>';
+  document.getElementById("users-table").innerHTML = `<div class="card table-wrap"><table>
     <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Location</th><th>Actions</th></tr></thead>
-    <tbody>${users.map(u=>`<tr>
+    <tbody>${users.map(u => `<tr>
       <td style="font-weight:500">${u.name}</td>
       <td style="color:var(--muted);font-family:monospace">${u.id}</td>
-      <td><span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:${u.role==='admin'?'rgba(240,165,0,.15)':'rgba(99,102,241,.15)'};color:${u.role==='admin'?'#fbbf24':'#818cf8'}">${u.role}</span></td>
-      <td style="color:var(--muted)">${u.location||'—'}</td>
-      <td>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn-danger" style="border-color:var(--ho);color:#818cf8" onclick="openResetPw('${u.id}')" title="Reset Password">${KEY} Reset PW</button>
-          ${u.id!=='admin'?`<button class="btn-danger" onclick="deleteUser('${u.id}')" title="Delete">${TRASH}</button>`:''}
-        </div>
-      </td>
+      <td><span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:${u.role==="admin"?"rgba(240,165,0,.15)":"rgba(99,102,241,.15)"};color:${u.role==="admin"?"#fbbf24":"#818cf8"}">${u.role}</span></td>
+      <td style="color:var(--muted)">${u.location||"—"}</td>
+      <td><div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn-danger" style="border-color:var(--ho);color:#818cf8" onclick="openResetPw('${u.id}')">${KEY} Reset PW</button>
+        ${u.id!=="admin"?`<button class="btn-danger" onclick="deleteUser('${u.id}')">${TRASH}</button>`:""}
+      </div></td>
     </tr>`).join("")}</tbody>
   </table></div>`;
 }
 
-function openUserModal(uid){
-  editingUserId = uid || null;
+function openUserModal() {
+  editingUserId = null;
   document.getElementById("um-err").style.display = "none";
-  document.getElementById("modal-title").textContent = uid ? "Edit User" : "Add New User";
-  if(uid){
-    const u = loadUsers().find(x=>x.id===uid);
-    document.getElementById("um-name").value     = u.name;
-    document.getElementById("um-username").value = u.id;
-    document.getElementById("um-username").disabled = true;
-    document.getElementById("um-location").value = u.location||"";
-    document.getElementById("um-password").value = "";
-    document.getElementById("um-password").placeholder = "Leave blank to keep current";
-  } else {
-    document.getElementById("um-name").value = "";
-    document.getElementById("um-username").value = "";
-    document.getElementById("um-username").disabled = false;
-    document.getElementById("um-location").value = "";
-    document.getElementById("um-password").value = "";
-    document.getElementById("um-password").placeholder = "Set password";
-  }
-  const modal = document.getElementById("user-modal");
-  modal.style.display = "flex";
-}
-
-function closeUserModal(){
-  document.getElementById("user-modal").style.display = "none";
+  document.getElementById("modal-title").textContent = "Add New User";
+  document.getElementById("um-name").value     = "";
+  document.getElementById("um-username").value = "";
   document.getElementById("um-username").disabled = false;
+  document.getElementById("um-location").value = "";
+  document.getElementById("um-password").value = "";
+  document.getElementById("user-modal").style.display = "flex";
 }
+function closeUserModal() { document.getElementById("user-modal").style.display = "none"; }
 
-function saveUserModal(){
+async function saveUserModal() {
   const name     = document.getElementById("um-name").value.trim();
-  const username = document.getElementById("um-username").value.trim().toLowerCase().replace(/\s+/g,"_");
+  const username = document.getElementById("um-username").value.trim().toLowerCase().replace(/ /g,"_");
   const location = document.getElementById("um-location").value;
   const password = document.getElementById("um-password").value;
   const errEl    = document.getElementById("um-err");
-
-  if(!name){ errEl.textContent="Name is required."; errEl.style.display="block"; return; }
-  if(!username){ errEl.textContent="Username is required."; errEl.style.display="block"; return; }
-  if(!location){ errEl.textContent="Please select a location."; errEl.style.display="block"; return; }
-
-  const users = loadUsers();
-  const passwords = loadPasswords();
-
-  if(!editingUserId){
-    // New user
-    if(users.find(u=>u.id===username)){ errEl.textContent="Username already exists."; errEl.style.display="block"; return; }
-    if(!password||password.length<4){ errEl.textContent="Password must be at least 4 characters."; errEl.style.display="block"; return; }
-    users.push({ id:username, name, role:"user", location });
+  errEl.style.display = "none";
+  if (!name)     { errEl.textContent = "Name is required.";             errEl.style.display = "block"; return; }
+  if (!username) { errEl.textContent = "Username is required.";         errEl.style.display = "block"; return; }
+  if (!location) { errEl.textContent = "Please select a location.";     errEl.style.display = "block"; return; }
+  if (!password || password.length < 4) { errEl.textContent = "Password must be at least 4 characters."; errEl.style.display = "block"; return; }
+  showLoading("Saving user...");
+  try {
+    const users     = await loadUsers();
+    const passwords = await loadPasswords();
+    if (users.find(u => u.id === username)) { hideLoading(); errEl.textContent = "Username already exists."; errEl.style.display = "block"; return; }
+    users.push({ id: username, name, role: "user", location });
     passwords[username] = password;
-  } else {
-    // Edit
-    const idx = users.findIndex(u=>u.id===editingUserId);
-    if(idx>-1){ users[idx].name=name; users[idx].location=location; }
-    if(password){ if(password.length<4){ errEl.textContent="Password must be at least 4 characters."; errEl.style.display="block"; return; } passwords[editingUserId]=password; }
-  }
-
-  saveUsers(users);
-  savePasswords(passwords);
-  closeUserModal();
-  renderUsers();
+    await saveUsers(users);
+    await savePasswords(passwords);
+    closeUserModal();
+    renderUsers();
+  } catch(e) { errEl.textContent = "Error saving. Try again."; errEl.style.display = "block"; console.error(e); }
+  hideLoading();
 }
 
-function deleteUser(uid){
-  if(!confirm("Delete this user? Their entries will remain.")) return;
-  const users = loadUsers().filter(u=>u.id!==uid);
-  const passwords = loadPasswords();
+async function deleteUser(uid) {
+  if (!confirm("Delete this user? Their entries will remain.")) return;
+  showLoading("Deleting...");
+  const users     = (await loadUsers()).filter(u => u.id !== uid);
+  const passwords = await loadPasswords();
   delete passwords[uid];
-  saveUsers(users);
-  savePasswords(passwords);
+  await saveUsers(users);
+  await savePasswords(passwords);
+  hideLoading();
   renderUsers();
 }
 
-// Reset password modal (reuse user modal for simplicity)
-function openResetPw(uid){
-  const u = loadUsers().find(x=>x.id===uid);
-  const newPw = prompt(`Reset password for "${u.name}" (${uid}):\nEnter new password:`);
-  if(newPw===null) return;
-  if(!newPw || newPw.length<4){ alert("Password must be at least 4 characters."); return; }
-  const passwords = loadPasswords();
+async function openResetPw(uid) {
+  const users = await loadUsers();
+  const u = users.find(x => x.id === uid);
+  const newPw = prompt('Reset password for ' + u.name + ' - Enter new password (min 4 chars):');
+  if (newPw === null) return;
+  if (!newPw || newPw.length < 4) { alert("Password must be at least 4 characters."); return; }
+  showLoading("Resetting password...");
+  const passwords = await loadPasswords();
   passwords[uid] = newPw;
-  savePasswords(passwords);
-  alert(`Password for "${u.name}" has been reset successfully.`);
+  await savePasswords(passwords);
+  hideLoading();
+  alert('Password for ' + u.name + ' reset successfully.');
 }
 
 // ══════════════════════════════════════════════════════
 //  CHANGE PASSWORD
 // ══════════════════════════════════════════════════════
-function initChangePw(){
+function initChangePw() {
   document.getElementById("cp-current").value = "";
-  document.getElementById("cp-new").value = "";
+  document.getElementById("cp-new").value     = "";
   document.getElementById("cp-confirm").value = "";
   document.getElementById("cp-err").style.display = "none";
   document.getElementById("cp-ok").style.display  = "none";
 }
 
-function changePassword(){
+async function changePassword() {
   const current = document.getElementById("cp-current").value;
   const newPw   = document.getElementById("cp-new").value;
-  const confirm = document.getElementById("cp-confirm").value;
+  const conf    = document.getElementById("cp-confirm").value;
   const errEl   = document.getElementById("cp-err");
   const okEl    = document.getElementById("cp-ok");
-  errEl.style.display = "none";
-  okEl.style.display  = "none";
-
-  const passwords = loadPasswords();
-  if(passwords[currentUser.id] !== current){
-    errEl.textContent = "Current password is incorrect.";
-    errEl.style.display = "block"; return;
-  }
-  if(newPw.length < 4){
-    errEl.textContent = "New password must be at least 4 characters.";
-    errEl.style.display = "block"; return;
-  }
-  if(newPw !== confirm){
-    errEl.textContent = "Passwords do not match.";
-    errEl.style.display = "block"; return;
-  }
+  errEl.style.display = "none"; okEl.style.display = "none";
+  const passwords = await loadPasswords();
+  if (passwords[currentUser.id] !== current) { errEl.textContent = "Current password is incorrect."; errEl.style.display = "block"; return; }
+  if (newPw.length < 4) { errEl.textContent = "New password must be at least 4 characters."; errEl.style.display = "block"; return; }
+  if (newPw !== conf)   { errEl.textContent = "Passwords do not match."; errEl.style.display = "block"; return; }
+  showLoading("Updating password...");
   passwords[currentUser.id] = newPw;
-  savePasswords(passwords);
+  await savePasswords(passwords);
+  hideLoading();
   document.getElementById("cp-current").value = "";
-  document.getElementById("cp-new").value = "";
+  document.getElementById("cp-new").value     = "";
   document.getElementById("cp-confirm").value = "";
   okEl.style.display = "block";
 }
 
 // ══════════════════════════════════════════════════════
-//  DELETE
+//  DELETE ENTRY
 // ══════════════════════════════════════════════════════
-function deleteEntry(id){
-  if(!confirm("Delete this entry?")) return;
-  saveExpenses(loadExpenses().filter(e=>e.id!==id));
-  if(currentTab==="entries") renderEntries();
-  if(currentTab==="mine")    renderMine();
-  if(currentTab==="dash")    renderDash();
-  if(currentTab==="entry")   renderRecent();
+async function deleteEntry(id) {
+  if (!confirm("Delete this entry?")) return;
+  await deleteExpenseFS(id);
 }
 
 // ══════════════════════════════════════════════════════
 //  TOAST
 // ══════════════════════════════════════════════════════
-function showToast(){
+function showToast() {
   const t = document.getElementById("toast");
   t.style.display = "block";
-  setTimeout(()=>{ t.style.display="none"; }, 2500);
+  setTimeout(() => { t.style.display = "none"; }, 2500);
 }
 </script>
-
-<!-- USER MODAL -->
-<div id="user-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center">
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px;width:360px;max-width:calc(100% - 32px)">
-    <div style="font-family:Syne,sans-serif;font-size:18px;font-weight:700;margin-bottom:24px" id="modal-title">Add New User</div>
-    <div style="display:flex;flex-direction:column;gap:14px">
-      <div class="form-group">
-        <label class="form-label">Full Name</label>
-        <input class="form-input" id="um-name" placeholder="e.g. Ali Hassan"/>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Username</label>
-        <input class="form-input" id="um-username" placeholder="e.g. ali_hassan"/>
-      </div>
-      <div class="form-group" id="um-loc-group">
-        <label class="form-label">Location</label>
-        <select class="form-select" id="um-location">
-          <option value="">— Select Location —</option>
-          <option>Head Office</option>
-          <option>Shop</option>
-          <option>Karachi Office</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Password</label>
-        <input class="form-input" type="password" id="um-password" placeholder="Set password"/>
-      </div>
-      <div id="um-err" style="color:var(--danger);font-size:13px;display:none"></div>
-      <div style="display:flex;gap:10px;margin-top:8px">
-        <button class="btn-primary" onclick="saveUserModal()" style="flex:1;justify-content:center">Save</button>
-        <button onclick="closeUserModal()" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:10px;padding:12px;cursor:pointer;font-family:DM Sans,sans-serif">Cancel</button>
-      </div>
-    </div>
-  </div>
-</div>
-</div>       <!-- line 1150 -->
-
-  <!-- ✅ YAHAN PASTE KARO -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, collection, getDocs, addDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
-    const firebaseConfig = {
-      apiKey: "AIza...",
-      authDomain: "your-app.firebaseapp.com",
-      projectId: "your-app-id",
-      storageBucket: "your-app.appspot.com",
-      messagingSenderId: "123456789",
-      appId: "1:123456789:web:abc123"
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
-  </script>
-
-</body>     <!-- line 1151 -->
-</html>    <!-- line 1152 -->
-</body>
-</html>
