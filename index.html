@@ -249,6 +249,8 @@ tr:hover td{background:var(--surface2)}
   .bar-val{width:70px;font-size:10px}
 }
 </style>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
@@ -472,9 +474,8 @@ tr:hover td{background:var(--surface2)}
 <!-- TOAST -->
 <div class="toast" id="toast">✓ Entry saved successfully!</div>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script>
+document.addEventListener("DOMContentLoaded", function() {
 // ══════════════════════════════════════════════════════
 //  FIREBASE INIT
 // ══════════════════════════════════════════════════════
@@ -1109,4 +1110,6 @@ function showToast() {
   t.style.display = "block";
   setTimeout(() => { t.style.display = "none"; }, 2500);
 }
+
+}); // end DOMContentLoaded
 </script>
