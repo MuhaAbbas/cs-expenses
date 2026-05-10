@@ -1059,8 +1059,8 @@ async function renderUsers(){
     <tbody>${users.map(u => {
       const isSelf     = u.email === currentUser.email || u.id === currentUser.id;
       const isAbbas    = u.email === "abbasnazeer2@gmail.com";
-      // Abbas cannot be deleted by anyone; others can be deleted by superadmin or by any admin (except self-delete protected)
-      const canDelete  = isSuperAdmin ? !isAbbas : (!isSelf && !isAbbas && u.role !== "admin");
+      // Abbas can delete anyone except himself; others cannot delete admins
+      const canDelete  = isSuperAdmin ? !isAbbas : (!isSelf && u.role !== "admin");
       const canPromote = isSuperAdmin && u.role !== "admin" && !isAbbas;
       return `<tr>
         <td style="font-weight:500">${u.name}${isAbbas?' <span style="color:var(--accent);font-size:10px">★ SUPER</span>':''}</td>
