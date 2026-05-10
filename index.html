@@ -1518,8 +1518,7 @@ function downloadExcelReport(){
   if(typeF !== "sales" && filtExp.length){
     const expByLoc = LOCATIONS.map(loc => ({ loc, rows: filtExp.filter(e=>e.location===loc) })).filter(x=>x.rows.length);
 
-    // Columns: Date + Location + each ECOL + Note + Entered By
-    const totalCols = 2 + ECOLS.length + 2; // Date, Location, ...cols..., Note, By
+    const totalCols = 2 + ECOLS.length + 1; // Date, Location, ...cols..., By
 
     html += `<table>
       <tr><td colspan="${totalCols}" class="section-header">&#128184; EXPENSES</td></tr>
@@ -1527,21 +1526,16 @@ function downloadExcelReport(){
         <th>Date</th>
         <th>Location</th>
         ${ECOLS.map(c=>`<th>${c}</th>`).join("")}
-        <th>Note</th>
         <th>Entered By</th>
       </tr>`;
 
     expByLoc.forEach(({loc, rows}) => {
       const cls = loc==="Head Office"?"loc-ho":loc==="Shop"?"loc-shop":"loc-khi";
 
-      // Group entries by date+category — merge same date different categories into one row
-      // If same date AND same category → separate rows
-      // If same date different category → same row
-
-      // Step 1: sort by date
+      // Sort by date
       const sorted = [...rows].sort((a,b) => a.date > b.date ? 1 : -1);
 
-      // Step 2: group by date, then within date group by category
+      // Group by date → category → entries[]
       const dateGroups = {};
       sorted.forEach(e => {
         const d = e.date||"";
@@ -1551,42 +1545,34 @@ function downloadExcelReport(){
         dateGroups[d][cat].push(e);
       });
 
-      // Step 3: for each date, find max entries across all categories
       Object.entries(dateGroups).forEach(([date, catMap]) => {
         const maxRows = Math.max(...Object.values(catMap).map(arr => arr.length));
 
         for(let i = 0; i < maxRows; i++){
-          // Build one merged row — for each category take i-th entry if exists
+          // Build amounts row
           const rowAmounts = {};
-          const rowNotes   = [];
+          const rowNotes   = {};  // col → note
           const rowBys     = new Set();
           let   hasData    = false;
 
           ECOLS.forEach(col => {
-            const catEntries = catMap[col] || [];
-            const entry = catEntries[i];
+            const entry = (catMap[col]||[])[i];
             if(entry){
               const v = getAmt(entry, col);
-              if(v > 0){ rowAmounts[col] = v; hasData = true; }
-              if(entry.note)      rowNotes.push(entry.note);
+              if(v > 0){
+                rowAmounts[col] = v;
+                rowNotes[col]   = entry.note||"";
+                hasData = true;
+              }
               if(entry.enteredBy) rowBys.add(entry.enteredBy);
             }
           });
 
           if(!hasData && i > 0) continue;
 
-          // Also catch entries from categories not in ECOLS
-          Object.entries(catMap).forEach(([cat, catEntries]) => {
-            const entry = catEntries[i];
-            if(entry && !ECOLS.includes(cat)){
-              if(entry.note)      rowNotes.push(entry.note);
-              if(entry.enteredBy) rowBys.add(entry.enteredBy);
-            }
-          });
+          const hasAnyNote = Object.values(rowNotes).some(n => n.trim() !== "");
 
-          const rowTotal = Object.values(rowAmounts).reduce((s,v)=>s+v, 0);
-          const noteText = [...new Set(rowNotes)].join(" | ");
-
+          // ── Amount row ──
           html += `<tr class="exp-row">
             <td>${i===0 ? date : ""}</td>
             <td class="${cls}">${i===0 ? loc : ""}</td>
@@ -1594,9 +1580,21 @@ function downloadExcelReport(){
               const v = rowAmounts[col];
               return `<td>${v > 0 ? "Rs. "+Number(v).toLocaleString("en-PK") : ""}</td>`;
             }).join("")}
-            <td style="text-align:left">${noteText}</td>
             <td>${[...rowBys].join(", ")}</td>
           </tr>`;
+
+          // ── Note row (directly below amount row) ──
+          if(hasAnyNote){
+            html += `<tr style="background:#fffbeb;">
+              <td style="font-size:10pt;color:#92400e;font-style:italic;text-align:right">Note:</td>
+              <td></td>
+              ${ECOLS.map(col => {
+                const n = rowNotes[col]||"";
+                return `<td style="font-size:10pt;color:#92400e;font-style:italic;text-align:left">${n}</td>`;
+              }).join("")}
+              <td></td>
+            </tr>`;
+          }
         }
       });
 
