@@ -403,14 +403,23 @@ tr:hover td{background:var(--surface2)}
               <label class="form-label">Date</label>
               <input class="form-input" type="date" id="e-date"/>
             </div>
+            <div class="form-group">
+              <label class="form-label">Category</label>
+              <select class="form-select" id="e-cat" onchange="updateSubcats()"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Sub-Category</label>
+              <select class="form-select" id="e-sub"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Amount (PKR)</label>
+              <input class="form-input" type="number" id="e-amount" placeholder="0"/>
+            </div>
             <div class="form-group full">
               <label class="form-label">Note / Description <span style="color:var(--danger)">*</span></label>
-              <input class="form-input" id="e-note" placeholder="Enter description (mandatory)"/>
+              <input class="form-input" id="e-note" placeholder="Enter description (mandatory)" onkeydown="if(event.key==='Enter')saveEntry()"/>
             </div>
           </div>
-          <div class="divider"></div>
-          <div style="font-family:Syne,sans-serif;font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:14px">Enter amounts for applicable categories (leave blank if not applicable)</div>
-          <div id="expense-fields-grid" class="form-grid"></div>
           <div id="e-err" style="color:var(--danger);font-size:13px;margin-top:8px;display:none"></div>
           <div style="margin-top:20px;display:flex;justify-content:flex-end">
             <button class="btn-primary" onclick="saveEntry()">
@@ -618,7 +627,7 @@ const DEFAULT_USERS = [
 ];
 const DEFAULT_PASSWORDS = { admin:"admin123", ho_user:"ho123", shop_user:"shop123", khi_user:"khi123" };
 
-// All possible expense columns (flat — each is one column in entry/table/excel)
+// All possible expense columns — names EXACTLY match EXPENSE_STRUCTURE keys
 const ALL_EXPENSE_COLS = [
   "Salaries & Wages",
   "Commission",
@@ -1040,7 +1049,6 @@ async function initApp(){
 
   if(!isAdmin){
     const loc  = currentUser.location;
-    const cols = LOC_EXPENSE_COLS[loc] || ALL_EXPENSE_COLS;
     document.getElementById("entry-loc-label").textContent = loc;
     document.getElementById("entry-loc-label").style.color = LOC_COLOR[loc];
     document.getElementById("mine-loc-label").textContent  = loc;
@@ -1049,13 +1057,9 @@ async function initApp(){
     document.getElementById("sale-loc-label").style.color  = LOC_COLOR[loc];
     document.getElementById("e-date").value = today();
     document.getElementById("s-date").value = today();
-    // Build dynamic expense amount fields
-    document.getElementById("expense-fields-grid").innerHTML = cols.map(col =>
-      `<div class="form-group">
-        <label class="form-label" style="color:var(--text)">${col}</label>
-        <input class="form-input" type="number" id="ecol-${col.replace(/[^a-zA-Z0-9]/g,'_')}" placeholder="0 (leave blank if none)" min="0"/>
-      </div>`
-    ).join("");
+    const cats = EXPENSE_STRUCTURE[loc];
+    document.getElementById("e-cat").innerHTML = Object.keys(cats).map(c=>`<option>${c}</option>`).join("");
+    updateSubcats();
   }
   switchTab(isAdmin ? "dash" : "entry");
 }
@@ -1084,45 +1088,57 @@ function switchTab(tab){
 // ══════════════════════════════════════════════════════
 function colId(col){ return "ecol-" + col.replace(/[^a-zA-Z0-9]/g,'_'); }
 
-async function saveEntry(){
-  const note = document.getElementById("e-note").value.trim();
-  const date = document.getElementById("e-date").value;
-  const errEl = document.getElementById("e-err");
-  errEl.style.display = "none";
-  if(!note){ errEl.textContent = "Note / Description is mandatory."; errEl.style.display="block"; return; }
-  if(!date){ errEl.textContent = "Please select a date."; errEl.style.display="block"; return; }
-
+function updateSubcats(){
   const loc  = currentUser.location;
-  const cols = LOC_EXPENSE_COLS[loc] || ALL_EXPENSE_COLS;
+  const cat  = document.getElementById("e-cat").value;
+  const subs = EXPENSE_STRUCTURE[loc]?.[cat] || [];
+  document.getElementById("e-sub").innerHTML = subs.map(s=>`<option>${s}</option>`).join("");
+}
 
-  // Collect amounts per column
+// Safe getter — category name IS the column name
+function getAmt(entry, col){
+  if(!entry) return 0;
+  // 1. Check amounts map with exact key
+  if(entry.amounts && entry.amounts[col] != null && entry.amounts[col] > 0)
+    return Number(entry.amounts[col]);
+  // 2. Legacy: if entry.category matches this column exactly
+  if(entry.category === col && entry.amount > 0)
+    return Number(entry.amount);
+  return 0;
+}
+
+async function saveEntry(){
+  const note   = document.getElementById("e-note").value.trim();
+  const date   = document.getElementById("e-date").value;
+  const cat    = document.getElementById("e-cat").value;
+  const sub    = document.getElementById("e-sub").value;
+  const amt    = parseFloat(document.getElementById("e-amount").value);
+  const errEl  = document.getElementById("e-err");
+  errEl.style.display = "none";
+
+  if(!date){ errEl.textContent="Please select a date."; errEl.style.display="block"; return; }
+  if(!cat){  errEl.textContent="Please select a category."; errEl.style.display="block"; return; }
+  if(!amt || amt <= 0){ errEl.textContent="Please enter a valid amount."; errEl.style.display="block"; return; }
+  if(!note){ errEl.textContent="Note / Description is mandatory."; errEl.style.display="block"; return; }
+
+  // Map category to flat column (category name IS the column name)
   const amounts = {};
-  let hasAny = false;
-  cols.forEach(col => {
-    const val = parseFloat(document.getElementById(colId(col))?.value || 0);
-    if(val > 0){ amounts[col] = val; hasAny = true; }
-  });
-
-  if(!hasAny){ errEl.textContent = "Please enter at least one amount."; errEl.style.display="block"; return; }
-
-  const totalAmt = Object.values(amounts).reduce((s,v)=>s+v, 0);
+  amounts[cat] = amt;
 
   const entry = {
-    id:        Date.now(),
-    location:  loc,
+    id:          Date.now(),
+    location:    currentUser.location,
     date,
+    category:    cat,
+    subcategory: sub,
     note,
-    amounts,           // { "Salaries & Wages": 50000, "Fuel": 5000, ... }
-    amount:    totalAmt,  // total for dashboard/reports
-    enteredBy: currentUser.name,
-    // legacy fields kept blank for compatibility
-    category:    "",
-    subcategory: "",
+    amounts,
+    amount:      amt,
+    enteredBy:   currentUser.name,
   };
 
-  // Clear fields
-  cols.forEach(col => { const el = document.getElementById(colId(col)); if(el) el.value = ""; });
-  document.getElementById("e-note").value = "";
+  document.getElementById("e-amount").value = "";
+  document.getElementById("e-note").value   = "";
   showToast();
   await addExpenseToFirestore(entry);
 }
@@ -1131,13 +1147,13 @@ function renderRecent(){
   const entries = allExpenses.filter(e => e.location === currentUser.location).slice(0,10);
   const el = document.getElementById("recent-entries-table");
   if(!entries.length){ el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No entries yet</div>'; return; }
-  const cols = LOC_EXPENSE_COLS[currentUser.location] || ALL_EXPENSE_COLS;
   el.innerHTML = `<div class="card table-wrap"><table>
-    <thead><tr><th>Date</th>${cols.map(c=>`<th>${c}</th>`).join("")}<th>Total</th><th>Note</th></tr></thead>
+    <thead><tr><th>Date</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th></tr></thead>
     <tbody>${entries.map(e=>`<tr>
       <td>${e.date}</td>
-      ${cols.map(c=>`<td style="color:${(e.amounts&&e.amounts[c])?"var(--text)":"var(--muted)"}">${(e.amounts&&e.amounts[c]) ? "Rs."+Number(e.amounts[c]).toLocaleString("en-PK") : "—"}</td>`).join("")}
-      <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">Rs.${Number(e.amount||0).toLocaleString("en-PK")}</td>
+      <td>${e.category||"—"}</td>
+      <td style="color:var(--muted)">${e.subcategory||"—"}</td>
+      <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">${PKR(e.amount||0)}</td>
       <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
     </tr>`).join("")}</tbody>
   </table></div>`;
@@ -1158,13 +1174,13 @@ function renderMine(){
     <div class="card"><div class="card-title">This Month</div><div class="card-val" style="color:var(--success)">${PKR(mtd)}</div></div>`;
   const el = document.getElementById("mine-table");
   if(!mine.length){ el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No entries yet</div>'; return; }
-  const cols  = LOC_EXPENSE_COLS[loc] || ALL_EXPENSE_COLS;
   const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
   el.innerHTML = `<div class="card table-wrap"><table>
-    <thead><tr><th>Date</th>${cols.map(c=>`<th>${c}</th>`).join("")}<th>Total</th><th>Note</th><th></th></tr></thead>
+    <thead><tr><th>Date</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th><th></th></tr></thead>
     <tbody>${mine.map(e=>`<tr>
       <td>${e.date}</td>
-      ${cols.map(c=>`<td style="color:${(e.amounts&&e.amounts[c])?"var(--text)":"var(--muted)"};font-size:13px">${(e.amounts&&e.amounts[c]) ? "Rs."+Number(e.amounts[c]).toLocaleString("en-PK") : ""}</td>`).join("")}
+      <td>${e.category||"—"}</td>
+      <td style="color:var(--muted)">${e.subcategory||"—"}</td>
       <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">${PKR(e.amount||0)}</td>
       <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
       <td><button class="btn-danger" onclick="deleteEntry(${e.id})">${TRASH}</button></td>
@@ -1277,7 +1293,7 @@ function renderEntries(){
     <tbody>${filtered.map(e=>`<tr>
       <td>${e.date}</td>
       <td><span class="loc-badge ${LOC_CLASS[e.location]}">${e.location}</span></td>
-      ${ALL_EXPENSE_COLS.map(c=>`<td style="font-size:12px;color:${(e.amounts&&e.amounts[c])?"var(--text)":"var(--muted)"}">${(e.amounts&&e.amounts[c]) ? "Rs."+Number(e.amounts[c]).toLocaleString("en-PK") : ""}</td>`).join("")}
+      ${ALL_EXPENSE_COLS.map(c=>`<td style="font-size:12px;color:${getAmt(e,c)>0?"var(--text)":"var(--muted)"}">${getAmt(e,c)>0 ? "Rs."+Number(getAmt(e,c)).toLocaleString("en-PK") : ""}</td>`).join("")}
       <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">${PKR(e.amount||0)}</td>
       <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
       <td style="color:var(--muted);font-size:12px">${e.enteredBy||""}</td>
@@ -1487,54 +1503,60 @@ function downloadExcelReport(){
     .section-header { background: #4a5568; color: white; font-weight: bold; font-size: 13pt; text-align: center; }
   </style></head><body>`;
 
+  const ECOLS     = ALL_EXPENSE_COLS;
+  const eColSpan  = ECOLS.length + 5; // Date + Location + SubCat + each col + Total + Note + By
+  const titleSpan = Math.max(eColSpan, 8);
+
   // Title block
   html += `<table>
-    <tr><td colspan="8" class="title">CNC ELECTRIC PAKISTAN — Expense & Sales Report</td></tr>
-    <tr><td colspan="8" style="text-align:center;font-style:italic;background:#f8f8f8">Period: ${dateLabel} &nbsp;|&nbsp; Location: ${locLabel} &nbsp;|&nbsp; Generated: ${new Date().toLocaleDateString('en-PK')}</td></tr>
-    <tr><td colspan="8" style="padding:4px"></td></tr>
+    <tr><td colspan="${titleSpan}" class="title">CNC ELECTRIC PAKISTAN — Expense &amp; Sales Report</td></tr>
+    <tr><td colspan="${titleSpan}" style="text-align:center;font-style:italic;background:#f8f8f8">Period: ${dateLabel} &nbsp;|&nbsp; Location: ${locLabel} &nbsp;|&nbsp; Generated: ${new Date().toLocaleDateString('en-PK')}</td></tr>
+    <tr><td colspan="${titleSpan}" style="padding:4px"></td></tr>
   </table><br>`;
 
   // ── EXPENSES TABLE ──
   if(typeF !== "sales" && filtExp.length){
-    const totalE = filtExp.reduce((s,e)=>s+e.amount,0);
-    // Group by location
     const expByLoc = LOCATIONS.map(loc => ({ loc, rows: filtExp.filter(e=>e.location===loc) })).filter(x=>x.rows.length);
 
-    const colSpan = ALL_EXPENSE_COLS.length + 4; // Date + Location + cols + Total + Note + By
     html += `<table>
-      <tr><td colspan="${colSpan}" class="section-header">💸 EXPENSES</td></tr>
+      <tr><td colspan="${eColSpan}" class="section-header">&#128184; EXPENSES</td></tr>
       <tr class="header">
         <th>Date</th>
         <th>Location</th>
-        ${ALL_EXPENSE_COLS.map(c=>`<th>${c}</th>`).join("")}
+        <th>Sub-Category</th>
+        ${ECOLS.map(c=>`<th>${c}</th>`).join("")}
         <th>Total</th>
         <th>Note</th>
         <th>Entered By</th>
       </tr>`;
 
     expByLoc.forEach(({loc, rows}) => {
-      const cls = loc==="Head Office"?"loc-ho":loc==="Shop"?"loc-shop":"loc-khi";
-      const locTotal = rows.reduce((s,e)=>s+(e.amount||0),0);
+      const cls      = loc==="Head Office"?"loc-ho":loc==="Shop"?"loc-shop":"loc-khi";
+      const locTotal = rows.reduce((s,e)=>s+(e.amount||0), 0);
       rows.forEach(e => {
         html += `<tr class="exp-row">
           <td>${e.date||""}</td>
           <td class="${cls}">${e.location||""}</td>
-          ${ALL_EXPENSE_COLS.map(c=>`<td>${(e.amounts&&e.amounts[c]) ? "Rs. "+Number(e.amounts[c]).toLocaleString("en-PK") : ""}</td>`).join("")}
+          <td style="color:#555">${e.subcategory||""}</td>
+          ${ECOLS.map(c => {
+            const v = getAmt(e, c);
+            return `<td>${v > 0 ? "Rs. "+Number(v).toLocaleString("en-PK") : ""}</td>`;
+          }).join("")}
           <td class="amount">Rs. ${Number(e.amount||0).toLocaleString("en-PK")}</td>
           <td>${e.note||""}</td>
           <td>${e.enteredBy||""}</td>
         </tr>`;
       });
       html += `<tr class="total-row">
-        <td colspan="${ALL_EXPENSE_COLS.length+2}" style="text-align:right;font-weight:bold">${loc} Sub-total:</td>
+        <td colspan="${ECOLS.length+3}" style="text-align:right;font-weight:bold">${loc} Sub-total:</td>
         <td class="amount">Rs. ${Number(locTotal).toLocaleString("en-PK")}</td>
         <td colspan="2"></td>
       </tr>`;
     });
 
-    const grandTotalE = filtExp.reduce((s,e)=>s+(e.amount||0),0);
+    const grandTotalE = filtExp.reduce((s,e)=>s+(e.amount||0), 0);
     html += `<tr style="background:#2d3748;color:white;font-weight:bold">
-      <td colspan="${ALL_EXPENSE_COLS.length+2}" style="text-align:center;color:white;font-weight:bold">TOTAL EXPENSES</td>
+      <td colspan="${ECOLS.length+3}" style="text-align:center;color:white;font-weight:bold">TOTAL EXPENSES</td>
       <td style="text-align:center;color:white;font-weight:bold">Rs. ${Number(grandTotalE).toLocaleString("en-PK")}</td>
       <td colspan="2"></td>
     </tr></table><br><br>`;
