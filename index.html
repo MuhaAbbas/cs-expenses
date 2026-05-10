@@ -718,16 +718,26 @@ function startAuthObserver(){
 
       // Auto-create profile if not found
       if(!user){
+        const isFirstUser = users.length === 0;
+        const isAbbasAdmin = firebaseUser.email === "abbasnazeer2@gmail.com";
         const newUser = {
           id:       firebaseUser.uid,
-          name:     firebaseUser.displayName || firebaseUser.email.split("@")[0],
-          role:     users.length === 0 ? "admin" : "user",  // First user = admin
+          name:     (isAbbasAdmin) ? "Abbas Nazeer" : (firebaseUser.displayName || firebaseUser.email.split("@")[0]),
+          role:     (isFirstUser || isAbbasAdmin) ? "admin" : "user",
           location: null,
           email:    firebaseUser.email
         };
         users.push(newUser);
         await saveUsers(users);
         user = newUser;
+      }
+
+      // Force admin role for abbasnazeer2@gmail.com always
+      if(user.email === "abbasnazeer2@gmail.com" && user.role !== "admin"){
+        user.role = "admin";
+        const allUsers = await loadUsers();
+        const idx = allUsers.findIndex(u => u.email === "abbasnazeer2@gmail.com");
+        if(idx !== -1){ allUsers[idx].role = "admin"; await saveUsers(allUsers); }
       }
 
       currentUser = user;
