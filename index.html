@@ -1547,18 +1547,21 @@ function downloadExcelReport(){
           <td>${e.enteredBy||""}</td>
         </tr>`;
       });
+      // colspan = Date(1) + Location(1) + SubCat(1) + ECOLS + Total(1) = ECOLS.length+4, then Note+By = 2 more
       html += `<tr class="total-row">
-        <td colspan="${ECOLS.length+3}" style="text-align:right;font-weight:bold">${loc} Sub-total:</td>
+        <td colspan="${ECOLS.length+4}" style="text-align:right;font-weight:bold">${loc} Sub-total:</td>
         <td class="amount">Rs. ${Number(locTotal).toLocaleString("en-PK")}</td>
-        <td colspan="2"></td>
+        <td></td>
+        <td></td>
       </tr>`;
     });
 
     const grandTotalE = filtExp.reduce((s,e)=>s+(e.amount||0), 0);
     html += `<tr style="background:#2d3748;color:white;font-weight:bold">
-      <td colspan="${ECOLS.length+3}" style="text-align:center;color:white;font-weight:bold">TOTAL EXPENSES</td>
+      <td colspan="${ECOLS.length+4}" style="text-align:center;color:white;font-weight:bold">TOTAL EXPENSES</td>
       <td style="text-align:center;color:white;font-weight:bold">Rs. ${Number(grandTotalE).toLocaleString("en-PK")}</td>
-      <td colspan="2"></td>
+      <td></td>
+      <td></td>
     </tr></table><br><br>`;
   }
 
