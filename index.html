@@ -429,6 +429,90 @@ tr:hover td{background:var(--surface2)}
         <div id="mine-table"></div>
       </div>
 
+      <!-- ── NEW SALE (user) ── -->
+      <div class="page" id="page-sale">
+        <div class="page-header">
+          <div>
+            <div class="page-title">New Sale Entry</div>
+            <div class="page-sub" id="sale-loc-label"></div>
+          </div>
+        </div>
+        <div class="card mb28">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">Date</label>
+              <input class="form-input" type="date" id="s-date"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Customer Name</label>
+              <input class="form-input" id="s-customer" placeholder="Enter customer name"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Amount (PKR)</label>
+              <input class="form-input" type="number" id="s-amount" placeholder="0"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Payment Method</label>
+              <select class="form-select" id="s-payment">
+                <option value="">— Select Payment —</option>
+                <option>Cash</option>
+                <option>Meezan Bank</option>
+                <option>Bank Al-Habib AOP</option>
+                <option>Bank Al-Habib PVT</option>
+                <option>Bank Alfalah</option>
+              </select>
+            </div>
+            <div class="form-group full">
+              <label class="form-label">Note (optional)</label>
+              <input class="form-input" id="s-note" placeholder="Add a note..."/>
+            </div>
+          </div>
+          <div style="margin-top:20px;display:flex;justify-content:flex-end">
+            <button class="btn-primary" onclick="saveSale()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              Save Sale
+            </button>
+          </div>
+        </div>
+        <div class="section-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Recent Sales
+        </div>
+        <div id="recent-sales-table"></div>
+      </div>
+
+      <!-- ── ALL SALES (admin) ── -->
+      <div class="page" id="page-sales">
+        <div class="page-header">
+          <div>
+            <div class="page-title">All Sales</div>
+            <div class="page-sub" id="sales-sub"></div>
+          </div>
+        </div>
+        <div class="filter-row">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          <select class="form-select" id="sf-loc" onchange="renderSales()">
+            <option value="All">All Locations</option>
+            <option>Head Office</option><option>Shop</option><option>Karachi Office</option>
+          </select>
+          <select class="form-select" id="sf-pay" onchange="renderSales()">
+            <option value="All">All Payments</option>
+            <option>Cash</option>
+            <option>Meezan Bank</option>
+            <option>Bank Al-Habib AOP</option>
+            <option>Bank Al-Habib PVT</option>
+            <option>Bank Alfalah</option>
+          </select>
+          <div class="filter-dates">
+            <input class="form-input" type="date" id="sf-from" onchange="renderSales()"/>
+            <input class="form-input" type="date" id="sf-to" onchange="renderSales()"/>
+          </div>
+          <input class="form-input" id="sf-search" oninput="renderSales()" placeholder="Search customer..."/>
+        </div>
+        <div class="cards-row mb28" id="sales-cards"></div>
+        <div id="sales-table"></div>
+      </div>
+
 
       <!-- ── USER MANAGEMENT (admin) ── -->
       <div class="page" id="page-users">
@@ -574,7 +658,9 @@ let currentUser  = null;
 let currentTab   = "";
 let reportTab    = "monthly";
 let allExpenses  = [];
+let allSales     = [];
 let unsubExpenses = null;
+let unsubSales    = null;
 let editingUserId = null;
 
 // ══════════════════════════════════════════════════════
@@ -621,6 +707,128 @@ async function loadPasswords(){
 async function savePasswords(obj){ await db.collection("settings").doc("passwords").set({ map: obj }); }
 async function addExpenseToFirestore(entry){ await db.collection("expenses").doc(String(entry.id)).set(entry); }
 async function deleteExpenseFromFirestore(id){ await db.collection("expenses").doc(String(id)).delete(); }
+
+async function addSaleToFirestore(sale){ await db.collection("sales").doc(String(sale.id)).set(sale); }
+async function deleteSaleFromFirestore(id){ await db.collection("sales").doc(String(id)).delete(); }
+
+function subscribeSales(){
+  if(unsubSales) unsubSales();
+  unsubSales = db.collection("sales").orderBy("date","desc").onSnapshot(snap => {
+    allSales = snap.docs.map(d => d.data());
+    if(currentTab==="sales") renderSales();
+    if(currentTab==="sale")  renderRecentSales();
+    if(currentTab==="dash")  renderDash();
+  }, err => { console.error("Sales Firestore error:", err); });
+}
+
+// ══════════════════════════════════════════════════════
+//  SALES
+// ══════════════════════════════════════════════════════
+const PAYMENT_COLORS = {
+  "Cash":               "#22c97a",
+  "Meezan Bank":        "#818cf8",
+  "Bank Al-Habib AOP":  "#f0a500",
+  "Bank Al-Habib PVT":  "#fb923c",
+  "Bank Alfalah":       "#34d399",
+};
+
+async function saveSale(){
+  const customer = document.getElementById("s-customer").value.trim();
+  const amt      = parseFloat(document.getElementById("s-amount").value);
+  const payment  = document.getElementById("s-payment").value;
+  const note     = document.getElementById("s-note").value.trim();
+  const date     = document.getElementById("s-date").value;
+  if(!customer){ document.getElementById("s-customer").focus(); return; }
+  if(!amt || amt <= 0){ document.getElementById("s-amount").focus(); return; }
+  if(!payment){ document.getElementById("s-payment").focus(); return; }
+  const sale = {
+    id:         Date.now(),
+    location:   currentUser.location,
+    customer,
+    amount:     amt,
+    payment,
+    date,
+    note,
+    enteredBy:  currentUser.name,
+  };
+  document.getElementById("s-customer").value = "";
+  document.getElementById("s-amount").value   = "";
+  document.getElementById("s-payment").value  = "";
+  document.getElementById("s-note").value     = "";
+  showToast();
+  await addSaleToFirestore(sale);
+}
+
+function renderRecentSales(){
+  const entries = allSales.filter(s => s.location === currentUser.location).slice(0,10);
+  const el = document.getElementById("recent-sales-table");
+  if(!entries.length){ el.innerHTML = '<div class="empty"><div class="empty-icon">🧾</div>No sales yet</div>'; return; }
+  const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
+  el.innerHTML = `<div class="card table-wrap"><table>
+    <thead><tr><th>Date</th><th>Customer</th><th>Amount</th><th>Payment</th><th>Note</th><th></th></tr></thead>
+    <tbody>${entries.map(s=>`<tr>
+      <td>${s.date}</td>
+      <td style="font-weight:500">${s.customer}</td>
+      <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--success)">${PKR(s.amount)}</td>
+      <td><span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:${PAYMENT_COLORS[s.payment]||'#6b7280'}22;color:${PAYMENT_COLORS[s.payment]||'#6b7280'}">${s.payment}</span></td>
+      <td style="color:var(--muted);font-size:13px">${s.note||"—"}</td>
+      <td><button class="btn-danger" onclick="deleteSale(${s.id})">${TRASH}</button></td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function renderSales(){
+  const locF    = document.getElementById("sf-loc")?.value    || "All";
+  const payF    = document.getElementById("sf-pay")?.value    || "All";
+  const fromF   = document.getElementById("sf-from")?.value   || "";
+  const toF     = document.getElementById("sf-to")?.value     || "";
+  const search  = document.getElementById("sf-search")?.value.toLowerCase() || "";
+  let filtered  = allSales;
+  if(locF   !== "All") filtered = filtered.filter(s => s.location === locF);
+  if(payF   !== "All") filtered = filtered.filter(s => s.payment  === payF);
+  if(fromF)            filtered = filtered.filter(s => s.date >= fromF);
+  if(toF)              filtered = filtered.filter(s => s.date <= toF);
+  if(search)           filtered = filtered.filter(s => s.customer.toLowerCase().includes(search) || (s.note||"").toLowerCase().includes(search));
+
+  const total   = filtered.reduce((s,e) => s+e.amount, 0);
+  const thisM   = new Date().toISOString().slice(0,7);
+  const mtd     = filtered.filter(s => s.date.startsWith(thisM)).reduce((s,e) => s+e.amount, 0);
+
+  // Payment breakdown
+  const byPay = {};
+  filtered.forEach(s => { byPay[s.payment] = (byPay[s.payment]||0) + s.amount; });
+
+  document.getElementById("sales-sub").textContent = `${filtered.length} sale${filtered.length!==1?"s":""} found`;
+  document.getElementById("sales-cards").innerHTML =
+    `<div class="card"><div class="card-title">Total Sales</div><div class="card-val" style="color:var(--success)">${PKR(total)}</div></div>
+     <div class="card"><div class="card-title">This Month</div><div class="card-val" style="color:var(--accent)">${PKR(mtd)}</div></div>
+     <div class="card"><div class="card-title">Transactions</div><div class="card-val">${filtered.length}</div></div>`
+    + Object.entries(byPay).map(([p,a]) =>
+      `<div class="card"><div class="card-title" style="color:${PAYMENT_COLORS[p]||'var(--muted)'}">${p}</div><div class="card-val" style="font-size:18px;color:${PAYMENT_COLORS[p]||'var(--text)'}">${PKR(a)}</div></div>`
+    ).join("");
+
+  const el = document.getElementById("sales-table");
+  const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
+  if(!filtered.length){ el.innerHTML = '<div class="empty"><div class="empty-icon">🧾</div>No sales found</div>'; return; }
+  el.innerHTML = `<div class="card table-wrap"><table>
+    <thead><tr><th>Date</th><th>Location</th><th>Customer</th><th>Amount</th><th>Payment</th><th>Note</th><th>By</th><th></th></tr></thead>
+    <tbody>${filtered.map(s=>`<tr>
+      <td>${s.date}</td>
+      <td><span class="loc-badge ${LOC_CLASS[s.location]}">${s.location}</span></td>
+      <td style="font-weight:500">${s.customer}</td>
+      <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--success)">${PKR(s.amount)}</td>
+      <td><span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:${PAYMENT_COLORS[s.payment]||'#6b7280'}22;color:${PAYMENT_COLORS[s.payment]||'#6b7280'}">${s.payment}</span></td>
+      <td style="color:var(--muted);font-size:13px">${s.note||"—"}</td>
+      <td style="color:var(--muted);font-size:12px">${s.enteredBy}</td>
+      <td><button class="btn-danger" onclick="deleteSale(${s.id})">${TRASH}</button></td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+async function deleteSale(id){
+  if(!confirm("Delete this sale entry?")) return;
+  await deleteSaleFromFirestore(id);
+}
 
 function subscribeExpenses(){
   if(unsubExpenses) unsubExpenses();
@@ -774,6 +982,7 @@ window.addEventListener("load", () => {
 // ══════════════════════════════════════════════════════
 async function initApp(){
   subscribeExpenses();
+  subscribeSales();
   const isAdmin = currentUser.role === "admin";
   const badge   = document.getElementById("nav-badge");
   badge.textContent  = currentUser.name;
@@ -781,14 +990,15 @@ async function initApp(){
   badge.style.color        = isAdmin ? "var(--accent)" : LOC_COLOR[currentUser.location];
 
   const nav = isAdmin
-    ? [["dash","Dashboard","dash"],["entries","All Entries","list"],["reports","Reports","chart"],["users","Users","users"],["changepw","My Password","lock"]]
-    : [["entry","New Entry","plus"],["mine","My Entries","list"],["changepw","My Password","lock"]];
+    ? [["dash","Dashboard","dash"],["entries","All Entries","list"],["sales","All Sales","sales"],["reports","Reports","chart"],["users","Users","users"],["changepw","My Password","lock"]]
+    : [["entry","New Entry","plus"],["sale","New Sale","sales"],["mine","My Entries","list"],["changepw","My Password","lock"]];
 
   const ICONS = {
     dash:  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
     list:  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
     chart: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>',
     plus:  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+    sales: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>',
     users: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
     lock:  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
   };
@@ -803,7 +1013,10 @@ async function initApp(){
     document.getElementById("entry-loc-label").style.color = LOC_COLOR[loc];
     document.getElementById("mine-loc-label").textContent  = loc;
     document.getElementById("mine-loc-label").style.color  = LOC_COLOR[loc];
+    document.getElementById("sale-loc-label").textContent  = loc;
+    document.getElementById("sale-loc-label").style.color  = LOC_COLOR[loc];
     document.getElementById("e-date").value = today();
+    document.getElementById("s-date").value = today();
     const cats = EXPENSE_STRUCTURE[loc];
     document.getElementById("e-cat").innerHTML = Object.keys(cats).map(c => `<option>${c}</option>`).join("");
     updateSubcats();
@@ -824,6 +1037,8 @@ function switchTab(tab){
   if(tab==="reports")  renderReports();
   if(tab==="mine")     renderMine();
   if(tab==="entry")    renderRecent();
+  if(tab==="sale")     renderRecentSales();
+  if(tab==="sales")    renderSales();
   if(tab==="users")    renderUsers();
   if(tab==="changepw") initChangePw();
 }
@@ -905,14 +1120,21 @@ function renderMine(){
 // ══════════════════════════════════════════════════════
 function renderDash(){
   const expenses = allExpenses;
-  const total = expenses.reduce((s,e)=>s+e.amount,0);
-  const thisM = new Date().toISOString().slice(0,7);
-  const mtd   = expenses.filter(e=>e.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
-  const byLoc = LOCATIONS.map(l=>({ l, t: expenses.filter(e=>e.location===l).reduce((s,e)=>s+e.amount,0) }));
+  const sales    = allSales;
+  const total    = expenses.reduce((s,e)=>s+e.amount,0);
+  const totalSales = sales.reduce((s,e)=>s+e.amount,0);
+  const thisM    = new Date().toISOString().slice(0,7);
+  const mtd      = expenses.filter(e=>e.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
+  const mtdSales = sales.filter(s=>s.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
+  const byLoc    = LOCATIONS.map(l=>({ l, t: expenses.filter(e=>e.location===l).reduce((s,e)=>s+e.amount,0) }));
+  const byLocSales = LOCATIONS.map(l=>({ l, t: sales.filter(s=>s.location===l).reduce((s,e)=>s+e.amount,0) }));
   document.getElementById("dash-cards").innerHTML =
-    `<div class="card"><div class="card-title">Total Expenses</div><div class="card-val" style="color:var(--accent)">${PKR(total)}</div></div>
-     <div class="card"><div class="card-title">This Month (MTD)</div><div class="card-val" style="color:var(--success)">${PKR(mtd)}</div></div>`
-    + byLoc.map(({l,t})=>`<div class="card"><div class="card-title">${l}</div><div class="card-val" style="color:${LOC_COLOR[l]}">${PKR(t)}</div></div>`).join("");
+    `<div class="card"><div class="card-title">Total Expenses</div><div class="card-val" style="color:var(--danger)">${PKR(total)}</div></div>
+     <div class="card"><div class="card-title">Expenses MTD</div><div class="card-val" style="color:var(--accent)">${PKR(mtd)}</div></div>
+     <div class="card"><div class="card-title">Total Sales</div><div class="card-val" style="color:var(--success)">${PKR(totalSales)}</div></div>
+     <div class="card"><div class="card-title">Sales MTD</div><div class="card-val" style="color:#34d399">${PKR(mtdSales)}</div></div>`
+    + byLoc.map(({l,t})=>`<div class="card"><div class="card-title">${l} Exp</div><div class="card-val" style="color:${LOC_COLOR[l]};font-size:18px">${PKR(t)}</div></div>`).join("")
+    + byLocSales.map(({l,t})=>`<div class="card"><div class="card-title">${l} Sales</div><div class="card-val" style="color:${LOC_COLOR[l]};font-size:18px">${PKR(t)}</div></div>`).join("");
   document.getElementById("dash-loc-chart").innerHTML = byLoc.map(({l,t})=>`
     <div class="bar-row"><div class="bar-label">${l}</div>
     <div class="bar-track"><div class="bar-fill" style="width:${total?(t/total*100):0}%;background:${LOC_COLOR[l]}"></div></div>
