@@ -403,23 +403,15 @@ tr:hover td{background:var(--surface2)}
               <label class="form-label">Date</label>
               <input class="form-input" type="date" id="e-date"/>
             </div>
-            <div class="form-group">
-              <label class="form-label">Category</label>
-              <select class="form-select" id="e-cat" onchange="updateSubcats()"></select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Sub-Category</label>
-              <select class="form-select" id="e-sub"></select>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Amount (PKR)</label>
-              <input class="form-input" type="number" id="e-amount" placeholder="0" onkeydown="if(event.key==='Enter')saveEntry()"/>
-            </div>
             <div class="form-group full">
-              <label class="form-label">Note (optional)</label>
-              <input class="form-input" id="e-note" placeholder="Add a note..."/>
+              <label class="form-label">Note / Description <span style="color:var(--danger)">*</span></label>
+              <input class="form-input" id="e-note" placeholder="Enter description (mandatory)"/>
             </div>
           </div>
+          <div class="divider"></div>
+          <div style="font-family:Syne,sans-serif;font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:14px">Enter amounts for applicable categories (leave blank if not applicable)</div>
+          <div id="expense-fields-grid" class="form-grid"></div>
+          <div id="e-err" style="color:var(--danger);font-size:13px;margin-top:8px;display:none"></div>
           <div style="margin-top:20px;display:flex;justify-content:flex-end">
             <button class="btn-primary" onclick="saveEntry()">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
@@ -626,6 +618,28 @@ const DEFAULT_USERS = [
 ];
 const DEFAULT_PASSWORDS = { admin:"admin123", ho_user:"ho123", shop_user:"shop123", khi_user:"khi123" };
 
+// All possible expense columns (flat — each is one column in entry/table/excel)
+const ALL_EXPENSE_COLS = [
+  "Salaries & Wages",
+  "Commission",
+  "Fuel",
+  "Mobile Allowance",
+  "Overtime",
+  "Utility Bills",
+  "Directors Expenses",
+  "Bilties Paid",
+  "Marketing Expenses",
+  "Rent Expenses",
+  "Admin Expenses",
+];
+
+// Which columns apply per location
+const LOC_EXPENSE_COLS = {
+  "Head Office":    ["Salaries & Wages","Commission","Fuel","Mobile Allowance","Overtime","Utility Bills","Directors Expenses","Bilties Paid","Marketing Expenses","Admin Expenses"],
+  "Shop":           ["Salaries & Wages","Commission","Fuel","Mobile Allowance","Utility Bills","Directors Expenses","Bilties Paid","Rent Expenses","Admin Expenses"],
+  "Karachi Office": ["Salaries & Wages","Commission","Fuel","Mobile Allowance","Utility Bills","Directors Expenses","Bilties Paid","Admin Expenses"],
+};
+
 const EXPENSE_STRUCTURE = {
   "Head Office": {
     "Salaries & Wages":   ["Corporate","Finance","Admin","Sales"],
@@ -635,7 +649,7 @@ const EXPENSE_STRUCTURE = {
     "Overtime":           ["Admin"],
     "Utility Bills":      ["Electric","Gas","WASA","Internet"],
     "Directors Expenses": ["Director Payment","Director Purchase","Director Entertainment"],
-    "Bulities Paid":      ["General"],
+    "Bilties Paid":       ["General"],
     "Marketing Expenses": ["Meta Charges","Content Creation"],
     "Admin Expenses":     ["Grocery","Repair & Maintenance","Labour for Stock","Staff Food","Printing & Stationery","Misc Expenses"],
   },
@@ -646,7 +660,7 @@ const EXPENSE_STRUCTURE = {
     "Mobile Allowance":   ["Sales"],
     "Utility Bills":      ["Electric","Gas","WASA","Internet"],
     "Directors Expenses": ["Director Payment","Director Purchase","Director Entertainment"],
-    "Bulities Paid":      ["General"],
+    "Bilties Paid":       ["General"],
     "Rent Expenses":      ["Shop Rent"],
     "Admin Expenses":     ["Grocery","Repair & Maintenance","Labour for Stock","Staff Food","Printing & Stationery","Misc Expenses"],
   },
@@ -657,7 +671,7 @@ const EXPENSE_STRUCTURE = {
     "Mobile Allowance":   ["Sales"],
     "Utility Bills":      ["Electric","Gas","WASA","Internet"],
     "Directors Expenses": ["Director Payment","Director Purchase","Director Entertainment"],
-    "Bulities Paid":      ["General"],
+    "Bilties Paid":       ["General"],
     "Admin Expenses":     ["Grocery","Repair & Maintenance","Labour for Stock","Staff Food","Printing & Stationery","Misc Expenses"],
   },
 };
@@ -1025,7 +1039,8 @@ async function initApp(){
   ).join("");
 
   if(!isAdmin){
-    const loc = currentUser.location;
+    const loc  = currentUser.location;
+    const cols = LOC_EXPENSE_COLS[loc] || ALL_EXPENSE_COLS;
     document.getElementById("entry-loc-label").textContent = loc;
     document.getElementById("entry-loc-label").style.color = LOC_COLOR[loc];
     document.getElementById("mine-loc-label").textContent  = loc;
@@ -1034,9 +1049,13 @@ async function initApp(){
     document.getElementById("sale-loc-label").style.color  = LOC_COLOR[loc];
     document.getElementById("e-date").value = today();
     document.getElementById("s-date").value = today();
-    const cats = EXPENSE_STRUCTURE[loc];
-    document.getElementById("e-cat").innerHTML = Object.keys(cats).map(c => `<option>${c}</option>`).join("");
-    updateSubcats();
+    // Build dynamic expense amount fields
+    document.getElementById("expense-fields-grid").innerHTML = cols.map(col =>
+      `<div class="form-group">
+        <label class="form-label" style="color:var(--text)">${col}</label>
+        <input class="form-input" type="number" id="ecol-${col.replace(/[^a-zA-Z0-9]/g,'_')}" placeholder="0 (leave blank if none)" min="0"/>
+      </div>`
+    ).join("");
   }
   switchTab(isAdmin ? "dash" : "entry");
 }
@@ -1063,28 +1082,47 @@ function switchTab(tab){
 // ══════════════════════════════════════════════════════
 //  ENTRY FORM
 // ══════════════════════════════════════════════════════
-function updateSubcats(){
-  const loc  = currentUser.location;
-  const cat  = document.getElementById("e-cat").value;
-  const subs = EXPENSE_STRUCTURE[loc][cat] || [];
-  document.getElementById("e-sub").innerHTML = subs.map(s => `<option>${s}</option>`).join("");
-}
+function colId(col){ return "ecol-" + col.replace(/[^a-zA-Z0-9]/g,'_'); }
 
 async function saveEntry(){
-  const amt = parseFloat(document.getElementById("e-amount").value);
-  if(!amt || amt <= 0){ document.getElementById("e-amount").focus(); return; }
+  const note = document.getElementById("e-note").value.trim();
+  const date = document.getElementById("e-date").value;
+  const errEl = document.getElementById("e-err");
+  errEl.style.display = "none";
+  if(!note){ errEl.textContent = "Note / Description is mandatory."; errEl.style.display="block"; return; }
+  if(!date){ errEl.textContent = "Please select a date."; errEl.style.display="block"; return; }
+
+  const loc  = currentUser.location;
+  const cols = LOC_EXPENSE_COLS[loc] || ALL_EXPENSE_COLS;
+
+  // Collect amounts per column
+  const amounts = {};
+  let hasAny = false;
+  cols.forEach(col => {
+    const val = parseFloat(document.getElementById(colId(col))?.value || 0);
+    if(val > 0){ amounts[col] = val; hasAny = true; }
+  });
+
+  if(!hasAny){ errEl.textContent = "Please enter at least one amount."; errEl.style.display="block"; return; }
+
+  const totalAmt = Object.values(amounts).reduce((s,v)=>s+v, 0);
+
   const entry = {
-    id:          Date.now(),
-    location:    currentUser.location,
-    category:    document.getElementById("e-cat").value,
-    subcategory: document.getElementById("e-sub").value,
-    amount:      amt,
-    date:        document.getElementById("e-date").value,
-    note:        document.getElementById("e-note").value,
-    enteredBy:   currentUser.name,
+    id:        Date.now(),
+    location:  loc,
+    date,
+    note,
+    amounts,           // { "Salaries & Wages": 50000, "Fuel": 5000, ... }
+    amount:    totalAmt,  // total for dashboard/reports
+    enteredBy: currentUser.name,
+    // legacy fields kept blank for compatibility
+    category:    "",
+    subcategory: "",
   };
-  document.getElementById("e-amount").value = "";
-  document.getElementById("e-note").value   = "";
+
+  // Clear fields
+  cols.forEach(col => { const el = document.getElementById(colId(col)); if(el) el.value = ""; });
+  document.getElementById("e-note").value = "";
   showToast();
   await addExpenseToFirestore(entry);
 }
@@ -1093,12 +1131,13 @@ function renderRecent(){
   const entries = allExpenses.filter(e => e.location === currentUser.location).slice(0,10);
   const el = document.getElementById("recent-entries-table");
   if(!entries.length){ el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No entries yet</div>'; return; }
+  const cols = LOC_EXPENSE_COLS[currentUser.location] || ALL_EXPENSE_COLS;
   el.innerHTML = `<div class="card table-wrap"><table>
-    <thead><tr><th>Date</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th></tr></thead>
+    <thead><tr><th>Date</th>${cols.map(c=>`<th>${c}</th>`).join("")}<th>Total</th><th>Note</th></tr></thead>
     <tbody>${entries.map(e=>`<tr>
-      <td>${e.date}</td><td>${e.category}</td>
-      <td style="color:var(--muted)">${e.subcategory}</td>
-      <td style="font-family:Syne,sans-serif;font-weight:600">${PKR(e.amount)}</td>
+      <td>${e.date}</td>
+      ${cols.map(c=>`<td style="color:${(e.amounts&&e.amounts[c])?"var(--text)":"var(--muted)"}">${(e.amounts&&e.amounts[c]) ? "Rs."+Number(e.amounts[c]).toLocaleString("en-PK") : "—"}</td>`).join("")}
+      <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">Rs.${Number(e.amount||0).toLocaleString("en-PK")}</td>
       <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
     </tr>`).join("")}</tbody>
   </table></div>`;
@@ -1110,22 +1149,23 @@ function renderRecent(){
 function renderMine(){
   const loc   = currentUser.location;
   const mine  = allExpenses.filter(e => e.location === loc);
-  const total = mine.reduce((s,e)=>s+e.amount,0);
+  const total = mine.reduce((s,e)=>s+(e.amount||0),0);
   const thisM = new Date().toISOString().slice(0,7);
-  const mtd   = mine.filter(e=>e.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
+  const mtd   = mine.filter(e=>e.date.startsWith(thisM)).reduce((s,e)=>s+(e.amount||0),0);
   document.getElementById("mine-cards").innerHTML = `
     <div class="card"><div class="card-title">Total Entries</div><div class="card-val">${mine.length}</div></div>
     <div class="card"><div class="card-title">Total Amount</div><div class="card-val" style="color:${LOC_COLOR[loc]}">${PKR(total)}</div></div>
     <div class="card"><div class="card-title">This Month</div><div class="card-val" style="color:var(--success)">${PKR(mtd)}</div></div>`;
   const el = document.getElementById("mine-table");
   if(!mine.length){ el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No entries yet</div>'; return; }
+  const cols  = LOC_EXPENSE_COLS[loc] || ALL_EXPENSE_COLS;
   const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
   el.innerHTML = `<div class="card table-wrap"><table>
-    <thead><tr><th>Date</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th><th></th></tr></thead>
+    <thead><tr><th>Date</th>${cols.map(c=>`<th>${c}</th>`).join("")}<th>Total</th><th>Note</th><th></th></tr></thead>
     <tbody>${mine.map(e=>`<tr>
-      <td>${e.date}</td><td>${e.category}</td>
-      <td style="color:var(--muted)">${e.subcategory}</td>
-      <td style="font-family:Syne,sans-serif;font-weight:600">${PKR(e.amount)}</td>
+      <td>${e.date}</td>
+      ${cols.map(c=>`<td style="color:${(e.amounts&&e.amounts[c])?"var(--text)":"var(--muted)"};font-size:13px">${(e.amounts&&e.amounts[c]) ? "Rs."+Number(e.amounts[c]).toLocaleString("en-PK") : ""}</td>`).join("")}
+      <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">${PKR(e.amount||0)}</td>
       <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
       <td><button class="btn-danger" onclick="deleteEntry(${e.id})">${TRASH}</button></td>
     </tr>`).join("")}</tbody>
@@ -1209,38 +1249,38 @@ function renderDash(){
 function renderEntries(){
   const expenses = allExpenses;
   const locF   = document.getElementById("f-loc").value;
-  const catF   = document.getElementById("f-cat").value;
   const fromD  = document.getElementById("f-from").value;
   const toD    = document.getElementById("f-to").value;
   const search = document.getElementById("f-search").value.toLowerCase();
-  const allCats = [...new Set(expenses.map(e=>e.category))].sort();
-  const cf   = document.getElementById("f-cat");
-  const prev = cf.value;
-  cf.innerHTML = '<option value="All">All Categories</option>' + allCats.map(c=>`<option>${c}</option>`).join("");
-  cf.value = prev;
+  // Remove old category filter if present
+  const cf = document.getElementById("f-cat");
+  if(cf) cf.style.display = "none";
+
   const filtered = expenses.filter(e=>{
     if(locF!=="All" && e.location!==locF) return false;
-    if(catF!=="All" && e.category!==catF) return false;
     if(fromD && e.date < fromD) return false;
     if(toD   && e.date > toD)   return false;
     if(search && !JSON.stringify(e).toLowerCase().includes(search)) return false;
     return true;
   });
-  const total = filtered.reduce((s,e)=>s+e.amount,0);
+  const total = filtered.reduce((s,e)=>s+(e.amount||0),0);
   document.getElementById("entries-sub").textContent = filtered.length + " entries • " + PKR(total) + " total";
   const el = document.getElementById("entries-table");
   if(!filtered.length){ el.innerHTML = '<div class="empty"><div class="empty-icon">🔍</div>No entries found</div>'; return; }
   const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
   el.innerHTML = `<div class="card table-wrap"><table>
-    <thead><tr><th>Date</th><th>Location</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th><th>By</th><th></th></tr></thead>
+    <thead><tr>
+      <th>Date</th><th>Location</th>
+      ${ALL_EXPENSE_COLS.map(c=>`<th style="font-size:10px">${c}</th>`).join("")}
+      <th>Total</th><th>Note</th><th>By</th><th></th>
+    </tr></thead>
     <tbody>${filtered.map(e=>`<tr>
       <td>${e.date}</td>
       <td><span class="loc-badge ${LOC_CLASS[e.location]}">${e.location}</span></td>
-      <td>${e.category}</td>
-      <td style="color:var(--muted)">${e.subcategory}</td>
-      <td style="font-family:Syne,sans-serif;font-weight:600">${PKR(e.amount)}</td>
+      ${ALL_EXPENSE_COLS.map(c=>`<td style="font-size:12px;color:${(e.amounts&&e.amounts[c])?"var(--text)":"var(--muted)"}">${(e.amounts&&e.amounts[c]) ? "Rs."+Number(e.amounts[c]).toLocaleString("en-PK") : ""}</td>`).join("")}
+      <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">${PKR(e.amount||0)}</td>
       <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
-      <td style="color:var(--muted);font-size:12px">${e.enteredBy}</td>
+      <td style="color:var(--muted);font-size:12px">${e.enteredBy||""}</td>
       <td><button class="btn-danger" onclick="deleteEntry(${e.id})">${TRASH}</button></td>
     </tr>`).join("")}</tbody>
   </table></div>`;
@@ -1460,42 +1500,42 @@ function downloadExcelReport(){
     // Group by location
     const expByLoc = LOCATIONS.map(loc => ({ loc, rows: filtExp.filter(e=>e.location===loc) })).filter(x=>x.rows.length);
 
+    const colSpan = ALL_EXPENSE_COLS.length + 4; // Date + Location + cols + Total + Note + By
     html += `<table>
-      <tr><td colspan="9" class="section-header">💸 EXPENSES</td></tr>
+      <tr><td colspan="${colSpan}" class="section-header">💸 EXPENSES</td></tr>
       <tr class="header">
         <th>Date</th>
         <th>Location</th>
-        <th>Category</th>
-        <th>Sub-Category</th>
-        <th>Amount (PKR)</th>
+        ${ALL_EXPENSE_COLS.map(c=>`<th>${c}</th>`).join("")}
+        <th>Total</th>
         <th>Note</th>
         <th>Entered By</th>
       </tr>`;
 
     expByLoc.forEach(({loc, rows}) => {
       const cls = loc==="Head Office"?"loc-ho":loc==="Shop"?"loc-shop":"loc-khi";
-      const locTotal = rows.reduce((s,e)=>s+e.amount,0);
+      const locTotal = rows.reduce((s,e)=>s+(e.amount||0),0);
       rows.forEach(e => {
         html += `<tr class="exp-row">
           <td>${e.date||""}</td>
           <td class="${cls}">${e.location||""}</td>
-          <td>${e.category||""}</td>
-          <td>${e.subcategory||""}</td>
+          ${ALL_EXPENSE_COLS.map(c=>`<td>${(e.amounts&&e.amounts[c]) ? "Rs. "+Number(e.amounts[c]).toLocaleString("en-PK") : ""}</td>`).join("")}
           <td class="amount">Rs. ${Number(e.amount||0).toLocaleString("en-PK")}</td>
           <td>${e.note||""}</td>
           <td>${e.enteredBy||""}</td>
         </tr>`;
       });
       html += `<tr class="total-row">
-        <td colspan="4" style="text-align:right;font-weight:bold">${loc} Sub-total:</td>
+        <td colspan="${ALL_EXPENSE_COLS.length+2}" style="text-align:right;font-weight:bold">${loc} Sub-total:</td>
         <td class="amount">Rs. ${Number(locTotal).toLocaleString("en-PK")}</td>
         <td colspan="2"></td>
       </tr>`;
     });
 
+    const grandTotalE = filtExp.reduce((s,e)=>s+(e.amount||0),0);
     html += `<tr style="background:#2d3748;color:white;font-weight:bold">
-      <td colspan="4" style="text-align:center;color:white;font-weight:bold">TOTAL EXPENSES</td>
-      <td style="text-align:center;color:white;font-weight:bold">Rs. ${Number(totalE).toLocaleString("en-PK")}</td>
+      <td colspan="${ALL_EXPENSE_COLS.length+2}" style="text-align:center;color:white;font-weight:bold">TOTAL EXPENSES</td>
+      <td style="text-align:center;color:white;font-weight:bold">Rs. ${Number(grandTotalE).toLocaleString("en-PK")}</td>
       <td colspan="2"></td>
     </tr></table><br><br>`;
   }
