@@ -263,8 +263,8 @@ tr:hover td{background:var(--surface2)}
       </svg>
     </div>
     <div class="login-sub">Expense Management Portal</div>
-    <label class="login-label">Username</label>
-    <input class="login-input" id="login-user" placeholder="Enter username" onkeydown="if(event.key==='Enter')doLogin()"/>
+    <label class="login-label">Email</label>
+    <input class="login-input" id="login-user" placeholder="Enter email address" onkeydown="if(event.key==='Enter')doLogin()"/>
     <label class="login-label">Password</label>
     <input class="login-input" type="password" id="login-pw" placeholder="Enter password" onkeydown="if(event.key==='Enter')doLogin()"/>
     <div class="login-err" id="login-err">Incorrect password. Please try again.</div>
@@ -643,24 +643,24 @@ function getSession(){ try{ const s=localStorage.getItem("cnc_session"); return 
 function toEmail(username){ return username.toLowerCase() + "@cnc-expenses.app"; }
 
 async function doLogin(){
-  const uid = document.getElementById("login-user").value.trim().toLowerCase();
-  const pw  = document.getElementById("login-pw").value;
-  const err = document.getElementById("login-err");
+  const input = document.getElementById("login-user").value.trim();
+  const pw    = document.getElementById("login-pw").value;
+  const err   = document.getElementById("login-err");
   err.style.display = "none";
-  if(!uid || !pw){ err.textContent="Please enter username and password."; err.style.display="block"; return; }
+  if(!input || !pw){ err.textContent="Please enter email and password."; err.style.display="block"; return; }
   showLoading("Signing in...");
   try{
-    // Sign in via Firebase Auth
-    await auth.signInWithEmailAndPassword(toEmail(uid), pw);
-    // Auth state observer will handle the rest (see onAuthStateChanged below)
+    await auth.signInWithEmailAndPassword(input, pw);
+    // onAuthStateChanged handles the rest
   }catch(e){
     hideLoading();
-    if(e.code === "auth/user-not-found" || e.code === "auth/wrong-password" || e.code === "auth/invalid-credential"){
-      err.textContent = "Incorrect username or password.";
-    } else if(e.code === "auth/too-many-requests"){
-      err.textContent = "Too many attempts. Please try again later.";
+    if(e.code==="auth/user-not-found"||e.code==="auth/wrong-password"||e.code==="auth/invalid-credential"||e.code==="auth/invalid-email"){
+      err.textContent = "Incorrect email or password.";
+    } else if(e.code==="auth/too-many-requests"){
+      err.textContent = "Too many attempts. Try again later.";
     } else {
       err.textContent = "Connection error. Check internet and try again.";
+      console.error(e);
     }
     err.style.display = "block";
   }
@@ -687,22 +687,40 @@ function startAuthObserver(){
     try{
       showLoading("Loading...");
       const users = await loadUsers();
-      const uid = firebaseUser.email.replace("@cnc-expenses.app","");
-      const user = users.find(u => u.id === uid);
-      if(user){
-        currentUser = user;
-        saveSession(user);
-        document.getElementById("login-screen").style.display = "none";
-        document.getElementById("app-screen").style.display   = "flex";
-        document.getElementById("login-pw").value   = "";
-        document.getElementById("login-user").value = "";
-        await initApp();
-      } else {
-        await auth.signOut();
-        clearSession();
+
+      // Find user by email or by username format
+      let user = users.find(u => u.email && u.email === firebaseUser.email);
+      if(!user){
+        const uid = firebaseUser.email.replace("@cnc-expenses.app","");
+        user = users.find(u => u.id === uid);
       }
+
+      // Auto-create profile if not found
+      if(!user){
+        const newUser = {
+          id:       firebaseUser.uid,
+          name:     firebaseUser.displayName || firebaseUser.email.split("@")[0],
+          role:     users.length === 0 ? "admin" : "user",  // First user = admin
+          location: null,
+          email:    firebaseUser.email
+        };
+        users.push(newUser);
+        await saveUsers(users);
+        user = newUser;
+      }
+
+      currentUser = user;
+      saveSession(user);
+      document.getElementById("login-screen").style.display = "none";
+      document.getElementById("app-screen").style.display   = "flex";
+      document.getElementById("login-pw").value   = "";
+      document.getElementById("login-user").value = "";
+      await initApp();
     }catch(e){
       console.error("Auth state error:", e);
+      const err = document.getElementById("login-err");
+      err.textContent = "Login error. Try again.";
+      err.style.display = "block";
       await auth.signOut();
       clearSession();
     }
