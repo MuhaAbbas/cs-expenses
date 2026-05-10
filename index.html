@@ -1268,7 +1268,6 @@ function renderEntries(){
   const fromD  = document.getElementById("f-from").value;
   const toD    = document.getElementById("f-to").value;
   const search = document.getElementById("f-search").value.toLowerCase();
-  // Remove old category filter if present
   const cf = document.getElementById("f-cat");
   if(cf) cf.style.display = "none";
 
@@ -1283,22 +1282,91 @@ function renderEntries(){
   document.getElementById("entries-sub").textContent = filtered.length + " entries • " + PKR(total) + " total";
   const el = document.getElementById("entries-table");
   if(!filtered.length){ el.innerHTML = '<div class="empty"><div class="empty-icon">🔍</div>No entries found</div>'; return; }
+
   const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
+
+  // Group by location → date → category → entries[]
+  let rowsHtml = "";
+  LOCATIONS.forEach(loc => {
+    const locRows = filtered.filter(e => e.location === loc);
+    if(!locRows.length) return;
+
+    // Group by date
+    const dateGroups = {};
+    [...locRows].sort((a,b)=>a.date>b.date?1:-1).forEach(e => {
+      const d = e.date||"";
+      if(!dateGroups[d]) dateGroups[d] = {};
+      const cat = e.category||"";
+      if(!dateGroups[d][cat]) dateGroups[d][cat] = [];
+      dateGroups[d][cat].push(e);
+    });
+
+    Object.entries(dateGroups).forEach(([date, catMap]) => {
+      const maxRows = Math.max(...Object.values(catMap).map(a=>a.length));
+
+      for(let i = 0; i < maxRows; i++){
+        const rowAmounts = {};
+        const rowNotes   = {};
+        const rowIds     = [];
+        const rowBys     = new Set();
+        let hasData = false;
+
+        ALL_EXPENSE_COLS.forEach(col => {
+          const entry = (catMap[col]||[])[i];
+          if(entry){
+            const v = getAmt(entry, col);
+            if(v > 0){
+              rowAmounts[col] = v;
+              rowNotes[col]   = entry.note||"";
+              rowIds.push(entry.id);
+              hasData = true;
+            }
+            if(entry.enteredBy) rowBys.add(entry.enteredBy);
+          }
+        });
+
+        if(!hasData && i > 0) continue;
+
+        const rowTotal   = Object.values(rowAmounts).reduce((s,v)=>s+v,0);
+        const hasAnyNote = Object.values(rowNotes).some(n=>n.trim()!=="");
+        const deleteBtn  = rowIds.length ? `<button class="btn-danger" onclick="deleteEntry(${rowIds[0]})">${TRASH}</button>` : "";
+
+        // Amount row
+        rowsHtml += `<tr>
+          <td>${i===0?date:""}</td>
+          <td>${i===0?`<span class="loc-badge ${LOC_CLASS[loc]}">${loc}</span>`:""}</td>
+          ${ALL_EXPENSE_COLS.map(col=>{
+            const v = rowAmounts[col];
+            return `<td style="font-size:12px;font-weight:${v>0?600:400};color:${v>0?"var(--text)":"var(--muted)"}">${v>0?"Rs."+Number(v).toLocaleString("en-PK"):""}</td>`;
+          }).join("")}
+          <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">${rowTotal>0?PKR(rowTotal):""}</td>
+          <td style="color:var(--muted);font-size:12px">${[...rowBys].join(", ")}</td>
+          <td>${deleteBtn}</td>
+        </tr>`;
+
+        // Note row — directly below amount row
+        if(hasAnyNote){
+          rowsHtml += `<tr style="background:rgba(240,165,0,.05)">
+            <td style="color:var(--accent);font-size:11px;text-align:right;padding-top:2px;padding-bottom:6px">↳</td>
+            <td style="color:var(--muted);font-size:11px;padding-bottom:6px">note:</td>
+            ${ALL_EXPENSE_COLS.map(col=>{
+              const n = rowNotes[col]||"";
+              return `<td style="color:var(--muted);font-size:11px;padding-bottom:6px">${n}</td>`;
+            }).join("")}
+            <td colspan="3"></td>
+          </tr>`;
+        }
+      }
+    });
+  });
+
   el.innerHTML = `<div class="card table-wrap"><table>
     <thead><tr>
       <th>Date</th><th>Location</th>
       ${ALL_EXPENSE_COLS.map(c=>`<th style="font-size:10px">${c}</th>`).join("")}
-      <th>Total</th><th>Note</th><th>By</th><th></th>
+      <th>Total</th><th>By</th><th></th>
     </tr></thead>
-    <tbody>${filtered.map(e=>`<tr>
-      <td>${e.date}</td>
-      <td><span class="loc-badge ${LOC_CLASS[e.location]}">${e.location}</span></td>
-      ${ALL_EXPENSE_COLS.map(c=>`<td style="font-size:12px;color:${getAmt(e,c)>0?"var(--text)":"var(--muted)"}">${getAmt(e,c)>0 ? "Rs."+Number(getAmt(e,c)).toLocaleString("en-PK") : ""}</td>`).join("")}
-      <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">${PKR(e.amount||0)}</td>
-      <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
-      <td style="color:var(--muted);font-size:12px">${e.enteredBy||""}</td>
-      <td><button class="btn-danger" onclick="deleteEntry(${e.id})">${TRASH}</button></td>
-    </tr>`).join("")}</tbody>
+    <tbody>${rowsHtml}</tbody>
   </table></div>`;
 }
 
@@ -1586,11 +1654,11 @@ function downloadExcelReport(){
           // ── Note row (directly below amount row) ──
           if(hasAnyNote){
             html += `<tr style="background:#fffbeb;">
-              <td style="font-size:10pt;color:#92400e;font-style:italic;text-align:right">Note:</td>
+              <td style="font-family:'Times New Roman',Times,serif;font-size:12pt;text-align:right;color:#92400e;">Note:</td>
               <td></td>
               ${ECOLS.map(col => {
                 const n = rowNotes[col]||"";
-                return `<td style="font-size:10pt;color:#92400e;font-style:italic;text-align:left">${n}</td>`;
+                return `<td style="font-family:'Times New Roman',Times,serif;font-size:12pt;text-align:left;color:#555;">${n}</td>`;
               }).join("")}
               <td></td>
             </tr>`;
