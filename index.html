@@ -353,19 +353,36 @@ tr:hover td{background:var(--surface2)}
       <!-- ── REPORTS (admin) ── -->
       <div class="page" id="page-reports">
         <div class="page-header">
-          <div><div class="page-title">Reports</div><div class="page-sub">Expense analysis and breakdown</div></div>
+          <div><div class="page-title">Reports</div><div class="page-sub">Expense & Sales analysis</div></div>
+          <button class="btn-primary" onclick="downloadExcelReport()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download Excel
+          </button>
         </div>
         <div class="mb28">
-          <div class="report-tabs-row" style="margin-bottom:10px">
-            <button class="report-tab active" id="rtab-monthly" onclick="setReportTab('monthly')">Monthly</button>
-            <button class="report-tab" id="rtab-category" onclick="setReportTab('category')">Category-wise</button>
-            <button class="report-tab" id="rtab-location" onclick="setReportTab('location')">Location-wise</button>
+          <div class="report-tabs-row" style="margin-bottom:14px">
+            <button class="report-tab active" id="rtab-monthly"  onclick="setReportTab('monthly')">Monthly</button>
+            <button class="report-tab"        id="rtab-category" onclick="setReportTab('category')">Category-wise</button>
+            <button class="report-tab"        id="rtab-location" onclick="setReportTab('location')">Location-wise</button>
+            <button class="report-tab"        id="rtab-custom"   onclick="setReportTab('custom')">Custom Range</button>
           </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
             <select class="form-select" id="r-year" onchange="renderReports()" style="flex:1;min-width:90px"></select>
             <select class="form-select" id="r-loc" onchange="renderReports()" style="flex:2;min-width:140px">
               <option value="All">All Locations</option>
               <option>Head Office</option><option>Shop</option><option>Karachi Office</option>
+            </select>
+          </div>
+          <!-- Custom date range (shown only for custom tab) -->
+          <div id="custom-range-row" style="display:none;margin-top:10px;display:none;gap:10px;flex-wrap:wrap;align-items:center">
+            <div class="filter-dates" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1;min-width:260px">
+              <input class="form-input" type="date" id="r-from" onchange="renderReports()" placeholder="From"/>
+              <input class="form-input" type="date" id="r-to"   onchange="renderReports()" placeholder="To"/>
+            </div>
+            <select class="form-select" id="r-type" onchange="renderReports()" style="min-width:150px">
+              <option value="both">Expenses + Sales</option>
+              <option value="expenses">Expenses Only</option>
+              <option value="sales">Sales Only</option>
             </select>
           </div>
         </div>
@@ -1119,29 +1136,66 @@ function renderMine(){
 //  ADMIN DASHBOARD
 // ══════════════════════════════════════════════════════
 function renderDash(){
-  const expenses = allExpenses;
-  const sales    = allSales;
-  const total    = expenses.reduce((s,e)=>s+e.amount,0);
+  const expenses   = allExpenses;
+  const sales      = allSales;
+  const thisM      = new Date().toISOString().slice(0,7);
+  const totalExp   = expenses.reduce((s,e)=>s+e.amount,0);
   const totalSales = sales.reduce((s,e)=>s+e.amount,0);
-  const thisM    = new Date().toISOString().slice(0,7);
-  const mtd      = expenses.filter(e=>e.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
-  const mtdSales = sales.filter(s=>s.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
-  const byLoc    = LOCATIONS.map(l=>({ l, t: expenses.filter(e=>e.location===l).reduce((s,e)=>s+e.amount,0) }));
-  const byLocSales = LOCATIONS.map(l=>({ l, t: sales.filter(s=>s.location===l).reduce((s,e)=>s+e.amount,0) }));
+  const mtdExp     = expenses.filter(e=>e.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
+  const mtdSales   = sales.filter(s=>s.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
+
+  // Top summary cards
   document.getElementById("dash-cards").innerHTML =
-    `<div class="card"><div class="card-title">Total Expenses</div><div class="card-val" style="color:var(--danger)">${PKR(total)}</div></div>
-     <div class="card"><div class="card-title">Expenses MTD</div><div class="card-val" style="color:var(--accent)">${PKR(mtd)}</div></div>
+    `<div class="card"><div class="card-title">Total Expenses</div><div class="card-val" style="color:var(--danger)">${PKR(totalExp)}</div></div>
+     <div class="card"><div class="card-title">Expenses MTD</div><div class="card-val" style="color:var(--accent)">${PKR(mtdExp)}</div></div>
      <div class="card"><div class="card-title">Total Sales</div><div class="card-val" style="color:var(--success)">${PKR(totalSales)}</div></div>
-     <div class="card"><div class="card-title">Sales MTD</div><div class="card-val" style="color:#34d399">${PKR(mtdSales)}</div></div>`
-    + byLoc.map(({l,t})=>`<div class="card"><div class="card-title">${l} Exp</div><div class="card-val" style="color:${LOC_COLOR[l]};font-size:18px">${PKR(t)}</div></div>`).join("")
-    + byLocSales.map(({l,t})=>`<div class="card"><div class="card-title">${l} Sales</div><div class="card-val" style="color:${LOC_COLOR[l]};font-size:18px">${PKR(t)}</div></div>`).join("");
-  document.getElementById("dash-loc-chart").innerHTML = byLoc.map(({l,t})=>`
-    <div class="bar-row"><div class="bar-label">${l}</div>
-    <div class="bar-track"><div class="bar-fill" style="width:${total?(t/total*100):0}%;background:${LOC_COLOR[l]}"></div></div>
-    <div class="bar-val">${PKR(t)}</div></div>`).join("");
+     <div class="card"><div class="card-title">Sales MTD</div><div class="card-val" style="color:#34d399">${PKR(mtdSales)}</div></div>`;
+
+  // Location rows — each location in its own coloured row
+  const LOC_BG = {
+    "Head Office":    "rgba(99,102,241,.08)",
+    "Shop":           "rgba(240,165,0,.08)",
+    "Karachi Office": "rgba(34,201,122,.08)",
+  };
+  const locRowsHtml = LOCATIONS.map(loc => {
+    const locExp   = expenses.filter(e=>e.location===loc).reduce((s,e)=>s+e.amount,0);
+    const locSales = sales.filter(s=>s.location===loc).reduce((s,e)=>s+e.amount,0);
+    const locMtdE  = expenses.filter(e=>e.location===loc&&e.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
+    const locMtdS  = sales.filter(s=>s.location===loc&&s.date.startsWith(thisM)).reduce((s,e)=>s+e.amount,0);
+    const color    = LOC_COLOR[loc];
+    return `
+    <div style="background:${LOC_BG[loc]};border:1px solid ${color}33;border-radius:14px;padding:20px 24px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <div style="width:10px;height:10px;border-radius:50%;background:${color}"></div>
+        <div style="font-family:Syne,sans-serif;font-weight:700;font-size:16px;color:${color}">${loc}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px">
+        <div class="card" style="background:var(--surface2);padding:14px">
+          <div class="card-title">Total Expenses</div>
+          <div class="card-val" style="color:var(--danger);font-size:18px">${PKR(locExp)}</div>
+        </div>
+        <div class="card" style="background:var(--surface2);padding:14px">
+          <div class="card-title">Expenses MTD</div>
+          <div class="card-val" style="color:var(--accent);font-size:18px">${PKR(locMtdE)}</div>
+        </div>
+        <div class="card" style="background:var(--surface2);padding:14px">
+          <div class="card-title">Total Sales</div>
+          <div class="card-val" style="color:var(--success);font-size:18px">${PKR(locSales)}</div>
+        </div>
+        <div class="card" style="background:var(--surface2);padding:14px">
+          <div class="card-title">Sales MTD</div>
+          <div class="card-val" style="color:#34d399;font-size:18px">${PKR(locMtdS)}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  document.getElementById("dash-loc-chart").innerHTML = locRowsHtml;
+
+  // Top expense categories
   const byCat = {};
   expenses.forEach(e=>{ byCat[e.category]=(byCat[e.category]||0)+e.amount; });
-  const top = Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const top  = Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const maxC = top[0] ? top[0][1] : 1;
   document.getElementById("dash-cat-chart").innerHTML = top.map(([c,a])=>`
     <div class="bar-row"><div class="bar-label">${c}</div>
@@ -1197,24 +1251,105 @@ function renderEntries(){
 // ══════════════════════════════════════════════════════
 function setReportTab(t){
   reportTab = t;
-  ["monthly","category","location"].forEach(x => document.getElementById("rtab-"+x).classList.toggle("active", x===t));
+  ["monthly","category","location","custom"].forEach(x => {
+    const el = document.getElementById("rtab-"+x);
+    if(el) el.classList.toggle("active", x===t);
+  });
+  // Show/hide custom range row
+  const cr = document.getElementById("custom-range-row");
+  cr.style.display = (t==="custom") ? "flex" : "none";
   renderReports();
 }
 
 function renderReports(){
   const expenses = allExpenses;
-  const yearF = document.getElementById("r-year").value;
-  const locF  = document.getElementById("r-loc").value;
-  const years = [...new Set(expenses.map(e=>e.date.slice(0,4)))].sort().reverse();
-  const allYears = years.includes(yearF) ? years : [yearF,...years];
-  document.getElementById("r-year").innerHTML = allYears.map(y=>`<option${y===yearF?" selected":""}>${y}</option>`).join("");
+  const sales    = allSales;
+  const yearF    = document.getElementById("r-year")?.value || new Date().getFullYear().toString();
+  const locF     = document.getElementById("r-loc")?.value  || "All";
+
+  // Populate year dropdown
+  const allYearsSet = new Set([
+    ...expenses.map(e=>e.date.slice(0,4)),
+    ...sales.map(s=>s.date.slice(0,4)),
+    new Date().getFullYear().toString()
+  ]);
+  const years = [...allYearsSet].sort().reverse();
+  const yearEl = document.getElementById("r-year");
+  if(yearEl) yearEl.innerHTML = years.map(y=>`<option${y===yearF?" selected":""}>${y}</option>`).join("");
+
+  const el = document.getElementById("report-content");
+
+  if(reportTab === "custom"){
+    const fromF  = document.getElementById("r-from")?.value || "";
+    const toF    = document.getElementById("r-to")?.value   || "";
+    const typeF  = document.getElementById("r-type")?.value || "both";
+    if(!fromF || !toF){ el.innerHTML='<div class="empty"><div class="empty-icon">📅</div>Please select From and To dates</div>'; return; }
+
+    const filtExp  = expenses.filter(e=>{
+      if(locF!=="All"&&e.location!==locF) return false;
+      return e.date>=fromF && e.date<=toF;
+    });
+    const filtSales = sales.filter(s=>{
+      if(locF!=="All"&&s.location!==locF) return false;
+      return s.date>=fromF && s.date<=toF;
+    });
+    const totalE = filtExp.reduce((s,e)=>s+e.amount,0);
+    const totalS = filtSales.reduce((s,e)=>s+e.amount,0);
+
+    let html = `<div style="margin-bottom:12px;font-size:13px;color:var(--muted)">
+      ${fromF} → ${toF} &nbsp;|&nbsp; ${locF==="All"?"All Locations":locF}
+    </div>`;
+
+    if(typeF!=="sales"){
+      html += `<div class="card mb28">
+        <div class="section-title">💸 Expenses (${filtExp.length} entries)</div>
+        ${!filtExp.length ? '<div class="empty" style="padding:20px">No expenses in this range</div>' :
+        `<div class="table-wrap"><table>
+          <thead><tr><th>Date</th><th>Location</th><th>Category</th><th>Sub-Cat</th><th class="tr">Amount</th><th>Note</th></tr></thead>
+          <tbody>${filtExp.map(e=>`<tr>
+            <td>${e.date}</td>
+            <td><span class="loc-badge ${LOC_CLASS[e.location]}">${e.location}</span></td>
+            <td>${e.category}</td><td style="color:var(--muted)">${e.subcategory}</td>
+            <td class="tr" style="font-family:Syne,sans-serif;font-weight:600">${PKR(e.amount)}</td>
+            <td style="color:var(--muted);font-size:12px">${e.note||"—"}</td>
+          </tr>`).join("")}</tbody>
+        </table></div>
+        <div class="divider"></div>
+        <div style="text-align:right;font-family:Syne,sans-serif;font-weight:700;font-size:16px">Total Expenses: <span style="color:var(--danger)">${PKR(totalE)}</span></div>`}
+      </div>`;
+    }
+
+    if(typeF!=="expenses"){
+      html += `<div class="card mb28">
+        <div class="section-title">💰 Sales (${filtSales.length} entries)</div>
+        ${!filtSales.length ? '<div class="empty" style="padding:20px">No sales in this range</div>' :
+        `<div class="table-wrap"><table>
+          <thead><tr><th>Date</th><th>Location</th><th>Customer</th><th>Payment</th><th class="tr">Amount</th><th>Note</th></tr></thead>
+          <tbody>${filtSales.map(s=>`<tr>
+            <td>${s.date}</td>
+            <td><span class="loc-badge ${LOC_CLASS[s.location]}">${s.location}</span></td>
+            <td style="font-weight:500">${s.customer}</td>
+            <td><span style="padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;background:${PAYMENT_COLORS[s.payment]||'#6b7280'}22;color:${PAYMENT_COLORS[s.payment]||'#6b7280'}">${s.payment}</span></td>
+            <td class="tr" style="font-family:Syne,sans-serif;font-weight:600;color:var(--success)">${PKR(s.amount)}</td>
+            <td style="color:var(--muted);font-size:12px">${s.note||"—"}</td>
+          </tr>`).join("")}</tbody>
+        </table></div>
+        <div class="divider"></div>
+        <div style="text-align:right;font-family:Syne,sans-serif;font-weight:700;font-size:16px">Total Sales: <span style="color:var(--success)">${PKR(totalS)}</span></div>`}
+      </div>`;
+    }
+    el.innerHTML = html;
+    return;
+  }
+
+  // Standard tabs
   const filtered = expenses.filter(e=>{
     if(locF!=="All" && e.location!==locF) return false;
     if(!e.date.startsWith(yearF)) return false;
     return true;
   });
   const totalFiltered = filtered.reduce((s,e)=>s+e.amount,0);
-  const el = document.getElementById("report-content");
+
   if(reportTab==="monthly"){
     const monthly = Array.from({length:12},(_,i)=>{
       const m = String(i+1).padStart(2,"0");
@@ -1259,11 +1394,142 @@ function renderReports(){
         <thead><tr><th>Month</th>${LOCATIONS.map(l=>`<th style="color:${LOC_COLOR[l]}">${l}</th>`).join("")}<th>Total</th></tr></thead>
         <tbody>${MONTHS.map((m,i)=>{
           const rowT = locMonthly.reduce((s,{data})=>s+data[i],0);
-          return `<tr><td>${m}</td>${locMonthly.map(({data})=>`<td style="font-family:Syne,sans-serif;font-weight:${data[i]>0?600:400};color:${data[i]>0?"var(--text)":"var(--muted)"}">${data[i]>0?PKR(data[i]):"—"}</td>`).join("")}
+          return `<tr><td>${m}</td>${locMonthly.map(({data,loc})=>`<td style="font-family:Syne,sans-serif;font-weight:${data[i]>0?600:400};color:${data[i]>0?LOC_COLOR[loc]:"var(--muted)"}">${data[i]>0?PKR(data[i]):"—"}</td>`).join("")}
           <td style="font-family:Syne,sans-serif;font-weight:700;color:var(--accent)">${rowT>0?PKR(rowT):"—"}</td></tr>`;
         }).join("")}</tbody>
       </table></div></div>`;
   }
+}
+
+// ══════════════════════════════════════════════════════
+//  EXCEL DOWNLOAD
+// ══════════════════════════════════════════════════════
+function downloadExcelReport(){
+  const locF   = document.getElementById("r-loc")?.value  || "All";
+  const typeF  = document.getElementById("r-type")?.value || "both";
+  const fromF  = document.getElementById("r-from")?.value || "";
+  const toF    = document.getElementById("r-to")?.value   || "";
+  const yearF  = document.getElementById("r-year")?.value || new Date().getFullYear().toString();
+
+  let filtExp   = allExpenses.filter(e => locF==="All" || e.location===locF);
+  let filtSales = allSales.filter(s    => locF==="All" || s.location===locF);
+
+  if(reportTab==="custom" && fromF && toF){
+    filtExp   = filtExp.filter(e   => e.date>=fromF && e.date<=toF);
+    filtSales = filtSales.filter(s => s.date>=fromF && s.date<=toF);
+  } else {
+    filtExp   = filtExp.filter(e   => e.date.startsWith(yearF));
+    filtSales = filtSales.filter(s => s.date.startsWith(yearF));
+  }
+
+  const dateLabel = (reportTab==="custom"&&fromF&&toF) ? `${fromF} to ${toF}` : yearF;
+  const locLabel  = locF==="All" ? "All Locations" : locF;
+
+  // Build HTML for Excel (Times New Roman, size 12, center aligned)
+  let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+    xmlns:x="urn:schemas-microsoft-com:office:excel"
+    xmlns="http://www.w3.org/TR/REC-html40">
+  <head><meta charset="UTF-8">
+  <style>
+    * { font-family: "Times New Roman", Times, serif; font-size: 12pt; }
+    body { font-family: "Times New Roman", Times, serif; font-size: 12pt; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #999; padding: 6px 10px; text-align: center; font-family: "Times New Roman", Times, serif; font-size: 12pt; }
+    .title  { font-size: 14pt; font-weight: bold; text-align: center; background: #1a1a2e; color: white; }
+    .header { background: #2d3748; color: white; font-weight: bold; text-align: center; }
+    .loc-ho   { background: #e8e8ff; color: #3730a3; font-weight: bold; }
+    .loc-shop { background: #fef3c7; color: #92400e; font-weight: bold; }
+    .loc-khi  { background: #d1fae5; color: #065f46; font-weight: bold; }
+    .amount   { font-weight: bold; text-align: center; }
+    .exp-row  { background: #fff5f5; }
+    .sale-row { background: #f0fff4; }
+    .total-row{ background: #f7fafc; font-weight: bold; }
+    .section-header { background: #4a5568; color: white; font-weight: bold; font-size: 13pt; text-align: center; }
+  </style></head><body>`;
+
+  // Title block
+  html += `<table>
+    <tr><td colspan="8" class="title">CNC ELECTRIC PAKISTAN — Expense & Sales Report</td></tr>
+    <tr><td colspan="8" style="text-align:center;font-style:italic;background:#f8f8f8">Period: ${dateLabel} &nbsp;|&nbsp; Location: ${locLabel} &nbsp;|&nbsp; Generated: ${new Date().toLocaleDateString('en-PK')}</td></tr>
+    <tr><td colspan="8" style="padding:4px"></td></tr>
+  </table><br>`;
+
+  // ── EXPENSES TABLE ──
+  if(typeF !== "sales" && filtExp.length){
+    const totalE = filtExp.reduce((s,e)=>s+e.amount,0);
+    // Group by location
+    const expByLoc = LOCATIONS.map(loc => ({ loc, rows: filtExp.filter(e=>e.location===loc) })).filter(x=>x.rows.length);
+
+    html += `<table>
+      <tr><td colspan="7" class="section-header">💸 EXPENSES</td></tr>
+      <tr class="header"><th>Date</th><th>Location</th><th>Category</th><th>Sub-Category</th><th>Amount (PKR)</th><th>Note</th><th>Entered By</th></tr>`;
+
+    expByLoc.forEach(({loc, rows}) => {
+      const cls = loc==="Head Office"?"loc-ho":loc==="Shop"?"loc-shop":"loc-khi";
+      const locTotal = rows.reduce((s,e)=>s+e.amount,0);
+      rows.forEach(e => {
+        html += `<tr class="exp-row">
+          <td>${e.date}</td>
+          <td class="${cls}">${e.location}</td>
+          <td>${e.category}</td>
+          <td>${e.subcategory||""}</td>
+          <td class="amount">Rs. ${Number(e.amount).toLocaleString("en-PK")}</td>
+          <td>${e.note||""}</td>
+          <td>${e.enteredBy||""}</td>
+        </tr>`;
+      });
+      html += `<tr class="total-row"><td colspan="4" style="text-align:right">${loc} Sub-total:</td><td class="amount">Rs. ${Number(locTotal).toLocaleString("en-PK")}</td><td colspan="2"></td></tr>`;
+    });
+
+    html += `<tr style="background:#2d3748;color:white;font-weight:bold">
+      <td colspan="4" style="text-align:center;color:white">TOTAL EXPENSES</td>
+      <td style="text-align:center;color:white">Rs. ${Number(totalE).toLocaleString("en-PK")}</td>
+      <td colspan="2"></td>
+    </tr></table><br><br>`;
+  }
+
+  // ── SALES TABLE ──
+  if(typeF !== "expenses" && filtSales.length){
+    const totalS = filtSales.reduce((s,e)=>s+e.amount,0);
+    const salesByLoc = LOCATIONS.map(loc => ({ loc, rows: filtSales.filter(s=>s.location===loc) })).filter(x=>x.rows.length);
+
+    html += `<table>
+      <tr><td colspan="7" class="section-header">💰 SALES</td></tr>
+      <tr class="header"><th>Date</th><th>Location</th><th>Customer</th><th>Payment Method</th><th>Amount (PKR)</th><th>Note</th><th>Entered By</th></tr>`;
+
+    salesByLoc.forEach(({loc, rows}) => {
+      const cls = loc==="Head Office"?"loc-ho":loc==="Shop"?"loc-shop":"loc-khi";
+      const locTotal = rows.reduce((s,e)=>s+e.amount,0);
+      rows.forEach(s => {
+        html += `<tr class="sale-row">
+          <td>${s.date}</td>
+          <td class="${cls}">${s.location}</td>
+          <td>${s.customer}</td>
+          <td>${s.payment}</td>
+          <td class="amount">Rs. ${Number(s.amount).toLocaleString("en-PK")}</td>
+          <td>${s.note||""}</td>
+          <td>${s.enteredBy||""}</td>
+        </tr>`;
+      });
+      html += `<tr class="total-row"><td colspan="4" style="text-align:right">${loc} Sub-total:</td><td class="amount">Rs. ${Number(locTotal).toLocaleString("en-PK")}</td><td colspan="2"></td></tr>`;
+    });
+
+    html += `<tr style="background:#276749;color:white;font-weight:bold">
+      <td colspan="4" style="text-align:center;color:white">TOTAL SALES</td>
+      <td style="text-align:center;color:white">Rs. ${Number(totalS).toLocaleString("en-PK")}</td>
+      <td colspan="2"></td>
+    </tr></table>`;
+  }
+
+  html += `</body></html>`;
+
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = `CNC_Report_${dateLabel.replace(/ /g,"_")}_${locLabel.replace(/ /g,"_")}.xls`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ══════════════════════════════════════════════════════
