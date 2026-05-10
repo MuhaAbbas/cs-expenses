@@ -1049,20 +1049,31 @@ function renderReports(){
 // ══════════════════════════════════════════════════════
 async function renderUsers(){
   const users = await loadUsers();
+  const isSuperAdmin = currentUser.email === "abbasnazeer2@gmail.com";
   const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
   const KEY   = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>';
+  const CROWN = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h20M5 20L3 8l5 4 4-6 4 6 5-4-2 12"/></svg>';
+
   document.getElementById("users-table").innerHTML = `<div class="card table-wrap"><table>
-    <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Location</th><th>Actions</th></tr></thead>
-    <tbody>${users.map(u=>`<tr>
-      <td style="font-weight:500">${u.name}</td>
-      <td style="color:var(--muted);font-family:monospace">${u.id}</td>
-      <td><span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:${u.role==="admin"?"rgba(240,165,0,.15)":"rgba(99,102,241,.15)"};color:${u.role==="admin"?"#fbbf24":"#818cf8"}">${u.role}</span></td>
-      <td style="color:var(--muted)">${u.location||"—"}</td>
-      <td><div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn-danger" style="border-color:var(--ho);color:#818cf8" onclick="openResetPw('${u.id}')">${KEY} Reset PW</button>
-        ${u.id!=="admin"?`<button class="btn-danger" onclick="deleteUser('${u.id}')">${TRASH}</button>`:""}
-      </div></td>
-    </tr>`).join("")}</tbody>
+    <thead><tr><th>Name</th><th>Email / Username</th><th>Role</th><th>Location</th><th>Actions</th></tr></thead>
+    <tbody>${users.map(u => {
+      const isSelf     = u.email === currentUser.email || u.id === currentUser.id;
+      const isAbbas    = u.email === "abbasnazeer2@gmail.com";
+      // Abbas cannot be deleted by anyone; others can be deleted by superadmin or by any admin (except self-delete protected)
+      const canDelete  = isSuperAdmin ? !isAbbas : (!isSelf && !isAbbas && u.role !== "admin");
+      const canPromote = isSuperAdmin && u.role !== "admin" && !isAbbas;
+      return `<tr>
+        <td style="font-weight:500">${u.name}${isAbbas?' <span style="color:var(--accent);font-size:10px">★ SUPER</span>':''}</td>
+        <td style="color:var(--muted);font-size:12px">${u.email || u.id}</td>
+        <td><span style="padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:${u.role==="admin"?"rgba(240,165,0,.15)":"rgba(99,102,241,.15)"};color:${u.role==="admin"?"#fbbf24":"#818cf8"}">${u.role}</span></td>
+        <td style="color:var(--muted)">${u.location||"—"}</td>
+        <td><div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn-danger" style="border-color:var(--ho);color:#818cf8" onclick="openResetPw('${u.id}')">${KEY} Reset PW</button>
+          ${canPromote ? `<button class="btn-danger" style="border-color:var(--accent);color:var(--accent)" onclick="promoteToAdmin('${u.id}')">${CROWN} Make Admin</button>` : ""}
+          ${canDelete  ? `<button class="btn-danger" onclick="deleteUser('${u.id}')">${TRASH} Delete</button>` : ""}
+        </div></td>
+      </tr>`;
+    }).join("")}</tbody>
   </table></div>`;
 }
 
@@ -1076,6 +1087,14 @@ function openUserModal(){
   document.getElementById("um-location").value = "";
   document.getElementById("um-password").value = "";
   document.getElementById("um-password").placeholder = "Set password";
+  // Show role dropdown only for Abbas (super admin)
+  const roleGroup = document.getElementById("um-role-group");
+  if(currentUser.email === "abbasnazeer2@gmail.com"){
+    roleGroup.style.display = "flex";
+    document.getElementById("um-role").value = "user";
+  } else {
+    roleGroup.style.display = "none";
+  }
   document.getElementById("user-modal").style.display = "flex";
 }
 
@@ -1088,20 +1107,22 @@ async function saveUserModal(){
   const username = document.getElementById("um-username").value.trim().toLowerCase().replace(/ /g,"_");
   const location = document.getElementById("um-location").value;
   const password = document.getElementById("um-password").value;
+  const role     = document.getElementById("um-role") ? document.getElementById("um-role").value : "user";
   const errEl    = document.getElementById("um-err");
   errEl.style.display = "none";
   if(!name){ errEl.textContent="Name is required."; errEl.style.display="block"; return; }
   if(!username){ errEl.textContent="Username is required."; errEl.style.display="block"; return; }
-  if(!location){ errEl.textContent="Please select a location."; errEl.style.display="block"; return; }
+  if(role !== "admin" && !location){ errEl.textContent="Please select a location."; errEl.style.display="block"; return; }
   if(!password||password.length<4){ errEl.textContent="Password must be at least 4 characters."; errEl.style.display="block"; return; }
   showLoading("Saving user...");
   try{
     const users = await loadUsers();
     if(users.find(u=>u.id===username)){ hideLoading(); errEl.textContent="Username already exists."; errEl.style.display="block"; return; }
-    // Create Firebase Auth account (fake email format)
-    await auth.createUserWithEmailAndPassword(toEmail(username), password);
+    // Create Firebase Auth account
+    const email = username + "@cnc-expenses.app";
+    await auth.createUserWithEmailAndPassword(email, password);
     // Save user profile to Firestore
-    users.push({ id:username, name, role:"user", location });
+    users.push({ id:username, name, role, location: role==="admin" ? null : location, email });
     await saveUsers(users);
     closeUserModal();
     renderUsers();
@@ -1114,6 +1135,16 @@ async function saveUserModal(){
     errEl.style.display="block";
   }
   hideLoading();
+}
+
+async function promoteToAdmin(uid){
+  if(!confirm("Make this user an Admin?")) return;
+  showLoading("Updating role...");
+  const users = await loadUsers();
+  const u = users.find(x => x.id === uid);
+  if(u){ u.role = "admin"; await saveUsers(users); }
+  hideLoading();
+  renderUsers();
 }
 
 async function deleteUser(uid){
@@ -1234,6 +1265,13 @@ function showToast(){
           <option>Head Office</option>
           <option>Shop</option>
           <option>Karachi Office</option>
+        </select>
+      </div>
+      <div class="form-group" id="um-role-group" style="display:none">
+        <label class="form-label">Role</label>
+        <select class="form-select" id="um-role">
+          <option value="user">User</option>
+          <option value="admin">Admin</option>
         </select>
       </div>
       <div class="form-group">
