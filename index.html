@@ -472,33 +472,41 @@ tr:hover td{background:var(--surface2)}
 <!-- TOAST -->
 <div class="toast" id="toast">✓ Entry saved successfully!</div>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script>
 // ══════════════════════════════════════════════════════
 //  FIREBASE CONFIG
 // ══════════════════════════════════════════════════════
 const firebaseConfig = {
-  apiKey: "AIzaSyBbe71JZwuLtegIH-NeRGIE3aXVacNKvkM",
-  authDomain: "cs-expenses-5d152.firebaseapp.com",
-  projectId: "cs-expenses-5d152",
-  storageBucket: "cs-expenses-5d152.firebasestorage.app",
-  messagingSenderId: "331443830345",
-  appId: "1:331443830345:web:70dc33a3b278cfe9bb4998"
+  apiKey: "AIzaSyAmQVtc4Io1qBgFhK6W7YoaD79RIIAVE3g",
+  authDomain: "cs-expenses.firebaseapp.com",
+  projectId: "cs-expenses",
+  storageBucket: "cs-expenses.firebasestorage.app",
+  messagingSenderId: "226973057922",
+  appId: "1:226973057922:web:8e223329f3a7d371a7859b",
+  measurementId: "G-4FM73F1CVY"
 };
-let app, db;
-try {
-  app = firebase.initializeApp(firebaseConfig);
-  db  = firebase.firestore();
-  // Enable offline persistence
-  db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
-} catch(e) {
-  if(e.code !== 'app/duplicate-app'){
-    console.error('Firebase init error:', e);
-  } else {
-    app = firebase.app();
-    db  = firebase.firestore();
+let app, db, auth;
+
+function initFirebase(){
+  try {
+    app  = firebase.initializeApp(firebaseConfig);
+    db   = firebase.firestore();
+    auth = firebase.auth();
+    db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+  } catch(e) {
+    if(e.code !== 'app/duplicate-app'){
+      console.error('Firebase init error:', e);
+      return false;
+    } else {
+      app  = firebase.app();
+      db   = firebase.firestore();
+      auth = firebase.auth();
+    }
   }
+  return true;
 }
 
 // ══════════════════════════════════════════════════════
@@ -631,6 +639,9 @@ function getSession(){ try{ const s=localStorage.getItem("cnc_session"); return 
 // ══════════════════════════════════════════════════════
 //  AUTH
 // ══════════════════════════════════════════════════════
+// username → email helper (Firebase Auth needs email format)
+function toEmail(username){ return username.toLowerCase() + "@cnc-expenses.app"; }
+
 async function doLogin(){
   const uid = document.getElementById("login-user").value.trim().toLowerCase();
   const pw  = document.getElementById("login-pw").value;
@@ -639,54 +650,74 @@ async function doLogin(){
   if(!uid || !pw){ err.textContent="Please enter username and password."; err.style.display="block"; return; }
   showLoading("Signing in...");
   try{
-    const users     = await loadUsers();
-    const passwords = await loadPasswords();
-    const user      = users.find(u => u.id.toLowerCase() === uid);
-    if(user && passwords[user.id] === pw){
-      currentUser = user;
-      saveSession(user);
-      document.getElementById("login-screen").style.display = "none";
-      document.getElementById("app-screen").style.display   = "flex";
-      document.getElementById("login-pw").value   = "";
-      document.getElementById("login-user").value = "";
-      await initApp();
-    } else {
-      err.textContent = "Incorrect username or password.";
-      err.style.display = "block";
-    }
+    // Sign in via Firebase Auth
+    await auth.signInWithEmailAndPassword(toEmail(uid), pw);
+    // Auth state observer will handle the rest (see onAuthStateChanged below)
   }catch(e){
-    err.textContent = "Connection error. Check internet and try again.";
+    hideLoading();
+    if(e.code === "auth/user-not-found" || e.code === "auth/wrong-password" || e.code === "auth/invalid-credential"){
+      err.textContent = "Incorrect username or password.";
+    } else if(e.code === "auth/too-many-requests"){
+      err.textContent = "Too many attempts. Please try again later.";
+    } else {
+      err.textContent = "Connection error. Check internet and try again.";
+    }
     err.style.display = "block";
   }
-  hideLoading();
 }
 
-function doLogout(){
+async function doLogout(){
   if(unsubExpenses){ unsubExpenses(); unsubExpenses=null; }
   clearSession();
   currentUser  = null;
   allExpenses  = [];
   currentTab   = "";
+  await auth.signOut();
   document.getElementById("app-screen").style.display   = "none";
   document.getElementById("login-screen").style.display = "flex";
 }
 
-// Restore session on page load
-window.addEventListener("load", async () => {
-  const session = getSession();
-  if(!session) return;
-  showLoading("Restoring session...");
-  try{
-    const users = await loadUsers();
-    const user  = users.find(u => u.id === session.id);
-    if(user){
-      currentUser = user;
-      document.getElementById("login-screen").style.display = "none";
-      document.getElementById("app-screen").style.display   = "flex";
-      await initApp();
-    } else { clearSession(); }
-  }catch(e){ clearSession(); }
-  hideLoading();
+// Firebase Auth state observer — single source of truth for login/logout
+function startAuthObserver(){
+  auth.onAuthStateChanged(async (firebaseUser) => {
+    if(!firebaseUser){
+      hideLoading();
+      return;
+    }
+    try{
+      showLoading("Loading...");
+      const users = await loadUsers();
+      const uid = firebaseUser.email.replace("@cnc-expenses.app","");
+      const user = users.find(u => u.id === uid);
+      if(user){
+        currentUser = user;
+        saveSession(user);
+        document.getElementById("login-screen").style.display = "none";
+        document.getElementById("app-screen").style.display   = "flex";
+        document.getElementById("login-pw").value   = "";
+        document.getElementById("login-user").value = "";
+        await initApp();
+      } else {
+        await auth.signOut();
+        clearSession();
+      }
+    }catch(e){
+      console.error("Auth state error:", e);
+      await auth.signOut();
+      clearSession();
+    }
+    hideLoading();
+  });
+}
+
+window.addEventListener("load", () => {
+  const ok = initFirebase();
+  if(!ok){
+    document.getElementById("login-err").textContent = "Firebase failed to load. Refresh the page.";
+    document.getElementById("login-err").style.display = "block";
+    return;
+  }
+  startAuthObserver();
 });
 
 // ══════════════════════════════════════════════════════
@@ -1016,27 +1047,35 @@ async function saveUserModal(){
   if(!password||password.length<4){ errEl.textContent="Password must be at least 4 characters."; errEl.style.display="block"; return; }
   showLoading("Saving user...");
   try{
-    const users     = await loadUsers();
-    const passwords = await loadPasswords();
+    const users = await loadUsers();
     if(users.find(u=>u.id===username)){ hideLoading(); errEl.textContent="Username already exists."; errEl.style.display="block"; return; }
+    // Create Firebase Auth account (fake email format)
+    await auth.createUserWithEmailAndPassword(toEmail(username), password);
+    // Save user profile to Firestore
     users.push({ id:username, name, role:"user", location });
-    passwords[username] = password;
     await saveUsers(users);
-    await savePasswords(passwords);
     closeUserModal();
     renderUsers();
-  }catch(e){ errEl.textContent="Error saving. Try again."; errEl.style.display="block"; }
+  }catch(e){
+    if(e.code === "auth/email-already-in-use"){
+      errEl.textContent="Username already exists in Auth.";
+    } else {
+      errEl.textContent="Error saving user: " + (e.message||"Try again.");
+    }
+    errEl.style.display="block";
+  }
   hideLoading();
 }
 
 async function deleteUser(uid){
   if(!confirm("Delete this user? Their entries will remain.")) return;
   showLoading("Deleting...");
-  const users     = (await loadUsers()).filter(u=>u.id!==uid);
-  const passwords = await loadPasswords();
-  delete passwords[uid];
-  await saveUsers(users);
-  await savePasswords(passwords);
+  try{
+    const users = (await loadUsers()).filter(u=>u.id!==uid);
+    await saveUsers(users);
+    // Note: Firebase Auth account remains but user can no longer access app
+    // (their profile is removed from Firestore users list)
+  }catch(e){ console.error(e); }
   hideLoading();
   renderUsers();
 }
@@ -1045,15 +1084,22 @@ async function openResetPw(uid){
   const users = await loadUsers();
   const u = users.find(x=>x.id===uid);
   const newPw = prompt('Reset password for ' + u.name + ' - Enter new password (min 4 chars):');
-
   if(newPw===null) return;
   if(!newPw||newPw.length<4){ alert("Password must be at least 4 characters."); return; }
   showLoading("Resetting password...");
-  const passwords = await loadPasswords();
-  passwords[uid] = newPw;
-  await savePasswords(passwords);
-  hideLoading();
-  alert('Password for "' + u.name + '" reset successfully.');
+  try{
+    // Re-authenticate and update password via Firebase Auth Admin approach:
+    // We sign in as that user temporarily using stored credentials won't work,
+    // so we use a password reset email instead for non-current users.
+    // For current user password change, use changePassword() function.
+    // For admin resetting OTHER users: send password reset email.
+    await auth.sendPasswordResetEmail(toEmail(uid));
+    hideLoading();
+    alert('Password reset email sent to the account linked with "' + u.name + '". Ask them to check their email.\n\nNote: Since this portal uses internal usernames, please use the Change Password option from within the app instead.');
+  }catch(e){
+    hideLoading();
+    alert('Error: ' + (e.message||"Could not reset password."));
+  }
 }
 
 // ══════════════════════════════════════════════════════
@@ -1074,18 +1120,31 @@ async function changePassword(){
   const errEl   = document.getElementById("cp-err");
   const okEl    = document.getElementById("cp-ok");
   errEl.style.display = "none"; okEl.style.display = "none";
-  const passwords = await loadPasswords();
-  if(passwords[currentUser.id] !== current){ errEl.textContent="Current password is incorrect."; errEl.style.display="block"; return; }
+  if(!current){ errEl.textContent="Enter your current password."; errEl.style.display="block"; return; }
   if(newPw.length<4){ errEl.textContent="New password must be at least 4 characters."; errEl.style.display="block"; return; }
   if(newPw!==conf){ errEl.textContent="Passwords do not match."; errEl.style.display="block"; return; }
   showLoading("Updating password...");
-  passwords[currentUser.id] = newPw;
-  await savePasswords(passwords);
-  hideLoading();
-  document.getElementById("cp-current").value = "";
-  document.getElementById("cp-new").value     = "";
-  document.getElementById("cp-confirm").value = "";
-  okEl.style.display = "block";
+  try{
+    const firebaseUser = auth.currentUser;
+    // Re-authenticate first (required by Firebase before password change)
+    const credential = firebase.auth.EmailAuthProvider.credential(toEmail(currentUser.id), current);
+    await firebaseUser.reauthenticateWithCredential(credential);
+    // Now update password
+    await firebaseUser.updatePassword(newPw);
+    hideLoading();
+    document.getElementById("cp-current").value = "";
+    document.getElementById("cp-new").value     = "";
+    document.getElementById("cp-confirm").value = "";
+    okEl.style.display = "block";
+  }catch(e){
+    hideLoading();
+    if(e.code === "auth/wrong-password" || e.code === "auth/invalid-credential"){
+      errEl.textContent = "Current password is incorrect.";
+    } else {
+      errEl.textContent = "Error: " + (e.message||"Could not update password.");
+    }
+    errEl.style.display = "block";
+  }
 }
 
 // ══════════════════════════════════════════════════════
