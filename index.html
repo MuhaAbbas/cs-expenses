@@ -1518,50 +1518,99 @@ function downloadExcelReport(){
   if(typeF !== "sales" && filtExp.length){
     const expByLoc = LOCATIONS.map(loc => ({ loc, rows: filtExp.filter(e=>e.location===loc) })).filter(x=>x.rows.length);
 
+    // Columns: Date + Location + each ECOL + Note + Entered By
+    const totalCols = 2 + ECOLS.length + 2; // Date, Location, ...cols..., Note, By
+
     html += `<table>
-      <tr><td colspan="${eColSpan}" class="section-header">&#128184; EXPENSES</td></tr>
+      <tr><td colspan="${totalCols}" class="section-header">&#128184; EXPENSES</td></tr>
       <tr class="header">
         <th>Date</th>
         <th>Location</th>
-        <th>Sub-Category</th>
         ${ECOLS.map(c=>`<th>${c}</th>`).join("")}
-        <th>Total</th>
         <th>Note</th>
         <th>Entered By</th>
       </tr>`;
 
     expByLoc.forEach(({loc, rows}) => {
-      const cls      = loc==="Head Office"?"loc-ho":loc==="Shop"?"loc-shop":"loc-khi";
-      const locTotal = rows.reduce((s,e)=>s+(e.amount||0), 0);
-      rows.forEach(e => {
-        html += `<tr class="exp-row">
-          <td>${e.date||""}</td>
-          <td class="${cls}">${e.location||""}</td>
-          <td style="color:#555">${e.subcategory||""}</td>
-          ${ECOLS.map(c => {
-            const v = getAmt(e, c);
-            return `<td>${v > 0 ? "Rs. "+Number(v).toLocaleString("en-PK") : ""}</td>`;
-          }).join("")}
-          <td class="amount">Rs. ${Number(e.amount||0).toLocaleString("en-PK")}</td>
-          <td>${e.note||""}</td>
-          <td>${e.enteredBy||""}</td>
-        </tr>`;
+      const cls = loc==="Head Office"?"loc-ho":loc==="Shop"?"loc-shop":"loc-khi";
+
+      // Group entries by date+category — merge same date different categories into one row
+      // If same date AND same category → separate rows
+      // If same date different category → same row
+
+      // Step 1: sort by date
+      const sorted = [...rows].sort((a,b) => a.date > b.date ? 1 : -1);
+
+      // Step 2: group by date, then within date group by category
+      const dateGroups = {};
+      sorted.forEach(e => {
+        const d = e.date||"";
+        if(!dateGroups[d]) dateGroups[d] = {};
+        const cat = e.category||"";
+        if(!dateGroups[d][cat]) dateGroups[d][cat] = [];
+        dateGroups[d][cat].push(e);
       });
-      // colspan = Date(1) + Location(1) + SubCat(1) + ECOLS + Total(1) = ECOLS.length+4, then Note+By = 2 more
+
+      // Step 3: for each date, find max entries across all categories
+      Object.entries(dateGroups).forEach(([date, catMap]) => {
+        const maxRows = Math.max(...Object.values(catMap).map(arr => arr.length));
+
+        for(let i = 0; i < maxRows; i++){
+          // Build one merged row — for each category take i-th entry if exists
+          const rowAmounts = {};
+          const rowNotes   = [];
+          const rowBys     = new Set();
+          let   hasData    = false;
+
+          ECOLS.forEach(col => {
+            const catEntries = catMap[col] || [];
+            const entry = catEntries[i];
+            if(entry){
+              const v = getAmt(entry, col);
+              if(v > 0){ rowAmounts[col] = v; hasData = true; }
+              if(entry.note)      rowNotes.push(entry.note);
+              if(entry.enteredBy) rowBys.add(entry.enteredBy);
+            }
+          });
+
+          if(!hasData && i > 0) continue;
+
+          // Also catch entries from categories not in ECOLS
+          Object.entries(catMap).forEach(([cat, catEntries]) => {
+            const entry = catEntries[i];
+            if(entry && !ECOLS.includes(cat)){
+              if(entry.note)      rowNotes.push(entry.note);
+              if(entry.enteredBy) rowBys.add(entry.enteredBy);
+            }
+          });
+
+          const rowTotal = Object.values(rowAmounts).reduce((s,v)=>s+v, 0);
+          const noteText = [...new Set(rowNotes)].join(" | ");
+
+          html += `<tr class="exp-row">
+            <td>${i===0 ? date : ""}</td>
+            <td class="${cls}">${i===0 ? loc : ""}</td>
+            ${ECOLS.map(col => {
+              const v = rowAmounts[col];
+              return `<td>${v > 0 ? "Rs. "+Number(v).toLocaleString("en-PK") : ""}</td>`;
+            }).join("")}
+            <td style="text-align:left">${noteText}</td>
+            <td>${[...rowBys].join(", ")}</td>
+          </tr>`;
+        }
+      });
+
+      const locTotal = rows.reduce((s,e)=>s+(e.amount||0), 0);
       html += `<tr class="total-row">
-        <td colspan="${ECOLS.length+4}" style="text-align:right;font-weight:bold">${loc} Sub-total:</td>
-        <td class="amount">Rs. ${Number(locTotal).toLocaleString("en-PK")}</td>
-        <td></td>
-        <td></td>
+        <td colspan="${ECOLS.length+2}" style="text-align:right;font-weight:bold">${loc} Sub-total:</td>
+        <td class="amount" colspan="2">Rs. ${Number(locTotal).toLocaleString("en-PK")}</td>
       </tr>`;
     });
 
     const grandTotalE = filtExp.reduce((s,e)=>s+(e.amount||0), 0);
     html += `<tr style="background:#2d3748;color:white;font-weight:bold">
-      <td colspan="${ECOLS.length+4}" style="text-align:center;color:white;font-weight:bold">TOTAL EXPENSES</td>
-      <td style="text-align:center;color:white;font-weight:bold">Rs. ${Number(grandTotalE).toLocaleString("en-PK")}</td>
-      <td></td>
-      <td></td>
+      <td colspan="${ECOLS.length+2}" style="text-align:center;color:white;font-weight:bold">TOTAL EXPENSES</td>
+      <td style="text-align:center;color:white;font-weight:bold" colspan="2">Rs. ${Number(grandTotalE).toLocaleString("en-PK")}</td>
     </tr></table><br><br>`;
   }
 
