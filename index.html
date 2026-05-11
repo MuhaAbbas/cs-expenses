@@ -917,12 +917,27 @@ function subscribeExpenses(){
   if(unsubExpenses) unsubExpenses();
   unsubExpenses = db.collection("expenses").orderBy("date","desc").onSnapshot(snap => {
     allExpenses = snap.docs.map(d => d.data());
-    if(currentTab==="dash")    renderDash();
-    if(currentTab==="entries") renderEntries();
-    if(currentTab==="reports") renderReports();
-    if(currentTab==="mine")    renderMine();
-    if(currentTab==="entry")   renderRecent();
-  }, err => { console.error("Firestore error:", err); });
+    refreshCurrentTab();
+  }, err => { console.error("Firestore expenses error:", err); });
+}
+
+function subscribeSales(){
+  if(unsubSales) unsubSales();
+  unsubSales = db.collection("sales").orderBy("date","desc").onSnapshot(snap => {
+    allSales = snap.docs.map(d => d.data());
+    refreshCurrentTab();
+  }, err => { console.error("Firestore sales error:", err); });
+}
+
+function refreshCurrentTab(){
+  if(!currentTab) return;
+  if(currentTab==="dash")    renderDash();
+  if(currentTab==="entries") renderEntries();
+  if(currentTab==="reports") renderReports();
+  if(currentTab==="mine")    renderMine();
+  if(currentTab==="entry")   renderRecent();
+  if(currentTab==="sale")    renderRecentSales();
+  if(currentTab==="sales")   renderSales();
 }
 
 // ══════════════════════════════════════════════════════
@@ -1064,10 +1079,31 @@ window.addEventListener("load", () => {
 //  APP INIT
 // ══════════════════════════════════════════════════════
 async function initApp(){
-  subscribeExpenses();
-  subscribeSales();
-  // Load opening cash
+  // Load opening cash first
   openingCash = await loadOpeningCash();
+
+  // Subscribe and wait for first snapshot before showing UI
+  await new Promise(resolve => {
+    let expLoaded = false, salesLoaded = false;
+    const tryResolve = () => { if(expLoaded && salesLoaded) resolve(); };
+
+    if(unsubExpenses) unsubExpenses();
+    unsubExpenses = db.collection("expenses").orderBy("date","desc").onSnapshot(snap => {
+      allExpenses = snap.docs.map(d => d.data());
+      if(!expLoaded){ expLoaded = true; tryResolve(); }
+      else refreshCurrentTab();
+    }, err => { console.error("Firestore expenses error:", err); expLoaded = true; tryResolve(); });
+
+    if(unsubSales) unsubSales();
+    unsubSales = db.collection("sales").orderBy("date","desc").onSnapshot(snap => {
+      allSales = snap.docs.map(d => d.data());
+      if(!salesLoaded){ salesLoaded = true; tryResolve(); }
+      else refreshCurrentTab();
+    }, err => { console.error("Firestore sales error:", err); salesLoaded = true; tryResolve(); });
+
+    // Timeout fallback — show UI after 8s even if data not loaded
+    setTimeout(resolve, 8000);
+  });
   const isAdmin = currentUser.role === "admin";
   const badge   = document.getElementById("nav-badge");
   badge.textContent  = currentUser.name;
