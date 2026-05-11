@@ -308,13 +308,33 @@ tr:hover td{background:var(--surface2)}
           <div><div class="page-title">Admin Dashboard</div><div class="page-sub">Overview of all locations</div></div>
         </div>
         <div class="cards-row" id="dash-cards"></div>
+
+        <!-- Cash In Hand Setting (Shop + Karachi) -->
+        <div class="card mb28" id="cash-setting-card">
+          <div class="section-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
+            Opening Cash Balance
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px" id="cash-setting-fields"></div>
+          <div style="margin-top:14px">
+            <button class="btn-primary" onclick="saveOpeningCashUI()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save Opening Cash
+            </button>
+            <span id="cash-save-ok" style="color:var(--success);font-size:13px;margin-left:12px;display:none">✓ Saved!</span>
+          </div>
+        </div>
+
+        <!-- Cash In Hand Live Cards -->
+        <div id="cash-in-hand-section" style="margin-bottom:28px"></div>
+
         <div class="two-col">
           <div class="card">
             <div class="section-title">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>
               Location-wise Breakdown
             </div>
-            <div class="bar-chart" id="dash-loc-chart"></div>
+            <div id="dash-loc-chart"></div>
           </div>
           <div class="card">
             <div class="section-title">
@@ -699,6 +719,7 @@ let currentTab   = "";
 let reportTab    = "monthly";
 let allExpenses  = [];
 let allSales     = [];
+let openingCash  = { "Shop": 0, "Karachi Office": 0 }; // per location
 let unsubExpenses = null;
 let unsubSales    = null;
 let editingUserId = null;
@@ -747,6 +768,28 @@ async function loadPasswords(){
 async function savePasswords(obj){ await db.collection("settings").doc("passwords").set({ map: obj }); }
 async function addExpenseToFirestore(entry){ await db.collection("expenses").doc(String(entry.id)).set(entry); }
 async function deleteExpenseFromFirestore(id){ await db.collection("expenses").doc(String(id)).delete(); }
+
+// ── Cash In Hand helpers ──
+async function loadOpeningCash(){
+  try{
+    const snap = await db.collection("settings").doc("openingCash").get();
+    if(snap.exists) return snap.data();
+    return { "Shop": 0, "Karachi Office": 0 };
+  }catch(e){ return { "Shop": 0, "Karachi Office": 0 }; }
+}
+async function saveOpeningCash(obj){ await db.collection("settings").doc("openingCash").set(obj); }
+
+// Calculate cash in hand for a location up to a date
+function calcCashInHand(loc, upToDate){
+  const opening = openingCash[loc] || 0;
+  const cashSales = allSales
+    .filter(s => s.location===loc && s.payment==="Cash" && (!upToDate || s.date<=upToDate))
+    .reduce((s,e)=>s+(e.amount||0), 0);
+  const expenses = allExpenses
+    .filter(e => e.location===loc && (!upToDate || e.date<=upToDate))
+    .reduce((s,e)=>s+(e.amount||0), 0);
+  return opening + cashSales - expenses;
+}
 
 async function addSaleToFirestore(sale){ await db.collection("sales").doc(String(sale.id)).set(sale); }
 async function deleteSaleFromFirestore(id){ await db.collection("sales").doc(String(id)).delete(); }
@@ -1023,6 +1066,8 @@ window.addEventListener("load", () => {
 async function initApp(){
   subscribeExpenses();
   subscribeSales();
+  // Load opening cash
+  openingCash = await loadOpeningCash();
   const isAdmin = currentUser.role === "admin";
   const badge   = document.getElementById("nav-badge");
   badge.textContent  = currentUser.name;
@@ -1207,7 +1252,55 @@ function renderDash(){
      <div class="card"><div class="card-title">Total Sales</div><div class="card-val" style="color:var(--success)">${PKR(totalSales)}</div></div>
      <div class="card"><div class="card-title">Sales MTD</div><div class="card-val" style="color:#34d399">${PKR(mtdSales)}</div></div>`;
 
-  // Location rows — each location in its own coloured row
+  // Opening cash input fields (Shop + Karachi only)
+  const cashLocs = ["Shop","Karachi Office"];
+  document.getElementById("cash-setting-fields").innerHTML = cashLocs.map(loc => `
+    <div class="form-group">
+      <label class="form-label" style="color:${LOC_COLOR[loc]}">${loc} — Opening Cash (PKR)</label>
+      <input class="form-input" type="number" id="oc-${loc.replace(/ /g,'_')}"
+        value="${openingCash[loc]||0}" placeholder="0"/>
+    </div>`).join("");
+
+  // Cash In Hand live cards
+  const cashHtml = cashLocs.map(loc => {
+    const cash       = calcCashInHand(loc);
+    const cashSales  = allSales.filter(s=>s.location===loc&&s.payment==="Cash").reduce((s,e)=>s+(e.amount||0),0);
+    const locExp     = allExpenses.filter(e=>e.location===loc).reduce((s,e)=>s+(e.amount||0),0);
+    const opening    = openingCash[loc]||0;
+    const color      = LOC_COLOR[loc];
+    const isPositive = cash >= 0;
+    return `
+    <div style="background:${isPositive?"rgba(34,201,122,.08)":"rgba(224,92,58,.08)"};border:1px solid ${isPositive?"#22c97a44":"#e05c3a44"};border-radius:14px;padding:20px 24px;flex:1;min-width:220px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <div style="width:10px;height:10px;border-radius:50%;background:${color}"></div>
+        <div style="font-family:Syne,sans-serif;font-weight:700;font-size:15px;color:${color}">${loc}</div>
+        <span style="margin-left:auto;font-size:11px;background:${isPositive?"rgba(34,201,122,.2)":"rgba(224,92,58,.2)"};color:${isPositive?"#22c97a":"#e05c3a"};padding:2px 10px;border-radius:20px;font-weight:600">Cash In Hand</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="card" style="background:var(--surface2);padding:12px">
+          <div class="card-title">Opening Cash</div>
+          <div style="font-family:Syne,sans-serif;font-weight:700;font-size:15px">${PKR(opening)}</div>
+        </div>
+        <div class="card" style="background:var(--surface2);padding:12px">
+          <div class="card-title">Cash Sales</div>
+          <div style="font-family:Syne,sans-serif;font-weight:700;font-size:15px;color:var(--success)">${PKR(cashSales)}</div>
+        </div>
+        <div class="card" style="background:var(--surface2);padding:12px">
+          <div class="card-title">Total Expenses</div>
+          <div style="font-family:Syne,sans-serif;font-weight:700;font-size:15px;color:var(--danger)">${PKR(locExp)}</div>
+        </div>
+        <div class="card" style="background:${isPositive?"rgba(34,201,122,.15)":"rgba(224,92,58,.15)"};padding:12px;border:1px solid ${isPositive?"#22c97a55":"#e05c3a55"}">
+          <div class="card-title">Cash In Hand</div>
+          <div style="font-family:Syne,sans-serif;font-weight:800;font-size:18px;color:${isPositive?"#22c97a":"#e05c3a"}">${PKR(cash)}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  document.getElementById("cash-in-hand-section").innerHTML =
+    `<div style="display:flex;gap:16px;flex-wrap:wrap">${cashHtml}</div>`;
+
+  // Location rows
   const LOC_BG = {
     "Head Office":    "rgba(99,102,241,.08)",
     "Shop":           "rgba(240,165,0,.08)",
@@ -1245,7 +1338,6 @@ function renderDash(){
       </div>
     </div>`;
   }).join("");
-
   document.getElementById("dash-loc-chart").innerHTML = locRowsHtml;
 
   // Top expense categories
@@ -1257,6 +1349,19 @@ function renderDash(){
     <div class="bar-row"><div class="bar-label">${c}</div>
     <div class="bar-track"><div class="bar-fill" style="width:${a/maxC*100}%;background:var(--accent)"></div></div>
     <div class="bar-val">${PKR(a)}</div></div>`).join("") || '<div style="color:var(--muted);font-size:13px">No data yet</div>';
+}
+
+async function saveOpeningCashUI(){
+  const cashLocs = ["Shop","Karachi Office"];
+  cashLocs.forEach(loc => {
+    const val = parseFloat(document.getElementById("oc-"+loc.replace(/ /g,'_'))?.value||0);
+    openingCash[loc] = isNaN(val) ? 0 : val;
+  });
+  await saveOpeningCash(openingCash);
+  const ok = document.getElementById("cash-save-ok");
+  ok.style.display = "inline";
+  setTimeout(()=>{ ok.style.display="none"; }, 2500);
+  renderDash();
 }
 
 // ══════════════════════════════════════════════════════
@@ -1723,6 +1828,39 @@ function downloadExcelReport(){
       <td style="text-align:center;color:white;font-weight:bold">Rs. ${Number(totalS).toLocaleString("en-PK")}</td>
       <td colspan="2"></td>
     </tr></table>`;
+  }
+
+  // ── CASH IN HAND SUMMARY (Shop + Karachi only) ──
+  const cashLocs = ["Shop","Karachi Office"].filter(l => locF==="All" || l===locF);
+  if(cashLocs.length){
+    html += `<br><br><table>
+      <tr><td colspan="6" class="section-header">&#128176; CASH IN HAND SUMMARY</td></tr>
+      <tr class="header">
+        <th>Location</th>
+        <th>Opening Cash</th>
+        <th>Cash Sales</th>
+        <th>Total Expenses</th>
+        <th>Cash In Hand</th>
+        <th>Status</th>
+      </tr>`;
+    cashLocs.forEach(loc => {
+      const opening   = openingCash[loc]||0;
+      // Only include cash in period filter
+      const cashSales = filtSales.filter(s=>s.location===loc&&s.payment==="Cash").reduce((s,e)=>s+(e.amount||0),0);
+      const expenses  = filtExp.filter(e=>e.location===loc).reduce((s,e)=>s+(e.amount||0),0);
+      const cashInHand = opening + cashSales - expenses;
+      const isPos  = cashInHand >= 0;
+      const cls    = loc==="Shop"?"loc-shop":"loc-khi";
+      html += `<tr>
+        <td class="${cls}">${loc}</td>
+        <td>Rs. ${Number(opening).toLocaleString("en-PK")}</td>
+        <td style="color:#276749;font-weight:bold">Rs. ${Number(cashSales).toLocaleString("en-PK")}</td>
+        <td style="color:#c0392b;font-weight:bold">Rs. ${Number(expenses).toLocaleString("en-PK")}</td>
+        <td style="font-weight:bold;color:${isPos?"#276749":"#c0392b"}">Rs. ${Number(cashInHand).toLocaleString("en-PK")}</td>
+        <td style="font-weight:bold;color:${isPos?"#276749":"#c0392b"}">${isPos?"✓ Positive":"⚠ Deficit"}</td>
+      </tr>`;
+    });
+    html += `</table>`;
   }
 
   html += `</body></html>`;
