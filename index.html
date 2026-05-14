@@ -249,6 +249,113 @@ tr:hover td{background:var(--surface2)}
   .bar-label{width:56px;font-size:10px}
   .bar-val{width:70px;font-size:10px}
 }
+
+/* ── BILL UPLOAD ── */
+.bill-upload-box{
+  border:2px dashed var(--border);
+  border-radius:12px;
+  padding:28px;
+  text-align:center;
+  cursor:pointer;
+  transition:all .2s;
+  background:var(--surface2);
+}
+.bill-upload-box:hover{border-color:var(--accent);background:rgba(240,165,0,.05)}
+.bill-upload-box.drag-over{border-color:var(--accent);background:rgba(240,165,0,.1)}
+.bill-upload-icon{font-size:36px;margin-bottom:10px;color:var(--muted)}
+.bill-upload-text{color:var(--text);font-weight:500;margin-bottom:4px}
+.bill-upload-hint{color:var(--muted);font-size:12px}
+.bill-preview-container{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
+.bill-preview{
+  position:relative;
+  width:120px;
+  height:120px;
+  border-radius:10px;
+  overflow:hidden;
+  border:1px solid var(--border);
+  background:var(--surface2);
+}
+.bill-preview img{width:100%;height:100%;object-fit:cover}
+.bill-preview-remove{
+  position:absolute;
+  top:4px;
+  right:4px;
+  background:var(--danger);
+  color:#fff;
+  border:none;
+  width:22px;
+  height:22px;
+  border-radius:50%;
+  cursor:pointer;
+  font-size:12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  transition:opacity .2s;
+}
+.bill-preview-remove:hover{opacity:.8}
+.bill-thumbnail{
+  width:40px;
+  height:40px;
+  border-radius:6px;
+  object-fit:cover;
+  cursor:pointer;
+  border:1px solid var(--border);
+  transition:all .2s;
+}
+.bill-thumbnail:hover{transform:scale(1.05);border-color:var(--accent)}
+.no-bill{color:var(--muted);font-size:12px;font-style:italic}
+
+/* ── IMAGE MODAL ── */
+.image-modal{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.92);
+  z-index:300;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+}
+.image-modal.active{display:flex}
+.image-modal-content{
+  max-width:90vw;
+  max-height:90vh;
+  position:relative;
+}
+.image-modal-content img{
+  max-width:100%;
+  max-height:90vh;
+  object-fit:contain;
+  border-radius:12px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);
+}
+.image-modal-close{
+  position:absolute;
+  top:-40px;
+  right:0;
+  background:var(--danger);
+  color:#fff;
+  border:none;
+  width:36px;
+  height:36px;
+  border-radius:50%;
+  cursor:pointer;
+  font-size:18px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.image-modal-info{
+  position:absolute;
+  bottom:-50px;
+  left:0;
+  right:0;
+  text-align:center;
+  color:var(--text);
+  font-size:13px;
+}
+
 </style>
 </head>
 <body>
@@ -440,6 +547,17 @@ tr:hover td{background:var(--surface2)}
               <label class="form-label">Note / Description <span style="color:var(--danger)">*</span></label>
               <input class="form-input" id="e-note" placeholder="Enter description (mandatory)" onkeydown="if(event.key==='Enter')saveEntry()"/>
             </div>
+            <!-- BILL UPLOAD SECTION -->
+            <div class="form-group full">
+              <label class="form-label">📎 Bill / Receipt (Optional)</label>
+              <div class="bill-upload-box" id="bill-upload-box" onclick="document.getElementById('bill-input').click()">
+                <input type="file" id="bill-input" accept="image/*" multiple style="display:none" onchange="handleBillSelect(event)"/>
+                <div class="bill-upload-icon">📷</div>
+                <div class="bill-upload-text">Click to upload bill or receipt</div>
+                <div class="bill-upload-hint">Drag & drop images or click to browse (JPG, PNG, max 5MB each)</div>
+              </div>
+              <div class="bill-preview-container" id="bill-preview-container"></div>
+            </div>
           </div>
           <div id="e-err" style="color:var(--danger);font-size:13px;margin-top:8px;display:none"></div>
           <div style="margin-top:20px;display:flex;justify-content:flex-end">
@@ -603,6 +721,8 @@ tr:hover td{background:var(--surface2)}
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+
 <script>
 // ══════════════════════════════════════════════════════
 //  FIREBASE CONFIG
@@ -623,6 +743,7 @@ function initFirebase(){
     app  = firebase.initializeApp(firebaseConfig);
     db   = firebase.firestore();
     auth = firebase.auth();
+    const storage = firebase.storage();
     db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
   } catch(e) {
     if(e.code !== 'app/duplicate-app'){
@@ -632,6 +753,7 @@ function initFirebase(){
       app  = firebase.app();
       db   = firebase.firestore();
       auth = firebase.auth();
+    const storage = firebase.storage();
     }
   }
   return true;
@@ -718,6 +840,7 @@ const today = () => new Date().toISOString().split("T")[0];
 let currentUser  = null;
 let currentTab   = "";
 let reportTab    = "monthly";
+let selectedBills = []; // For bill upload
 let allExpenses  = [];
 let allSales     = [];
 let openingCash  = { "Shop": 0, "Karachi Office": 0 }; // per location
@@ -734,7 +857,114 @@ function showLoading(msg){
     el = document.createElement("div");
     el.id = "loading-overlay";
     el.style.cssText = "position:fixed;inset:0;background:rgba(13,15,20,.88);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px";
-    el.innerHTML = '<div style="width:38px;height:38px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite"></div><div id="loading-msg" style="color:var(--muted);font-size:14px"></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
+    el.innerHTML = '<div style="width:38px;height:38px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite"></div><div id="loading-msg" style="color:var(--muted);font-size:14px"></div><style>@keyframes spin{to{transform:rotate(360deg)}}
+/* ── BILL UPLOAD ── */
+.bill-upload-box{
+  border:2px dashed var(--border);
+  border-radius:12px;
+  padding:28px;
+  text-align:center;
+  cursor:pointer;
+  transition:all .2s;
+  background:var(--surface2);
+}
+.bill-upload-box:hover{border-color:var(--accent);background:rgba(240,165,0,.05)}
+.bill-upload-box.drag-over{border-color:var(--accent);background:rgba(240,165,0,.1)}
+.bill-upload-icon{font-size:36px;margin-bottom:10px;color:var(--muted)}
+.bill-upload-text{color:var(--text);font-weight:500;margin-bottom:4px}
+.bill-upload-hint{color:var(--muted);font-size:12px}
+.bill-preview-container{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
+.bill-preview{
+  position:relative;
+  width:120px;
+  height:120px;
+  border-radius:10px;
+  overflow:hidden;
+  border:1px solid var(--border);
+  background:var(--surface2);
+}
+.bill-preview img{width:100%;height:100%;object-fit:cover}
+.bill-preview-remove{
+  position:absolute;
+  top:4px;
+  right:4px;
+  background:var(--danger);
+  color:#fff;
+  border:none;
+  width:22px;
+  height:22px;
+  border-radius:50%;
+  cursor:pointer;
+  font-size:12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  transition:opacity .2s;
+}
+.bill-preview-remove:hover{opacity:.8}
+.bill-thumbnail{
+  width:40px;
+  height:40px;
+  border-radius:6px;
+  object-fit:cover;
+  cursor:pointer;
+  border:1px solid var(--border);
+  transition:all .2s;
+}
+.bill-thumbnail:hover{transform:scale(1.05);border-color:var(--accent)}
+.no-bill{color:var(--muted);font-size:12px;font-style:italic}
+
+/* ── IMAGE MODAL ── */
+.image-modal{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.92);
+  z-index:300;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+}
+.image-modal.active{display:flex}
+.image-modal-content{
+  max-width:90vw;
+  max-height:90vh;
+  position:relative;
+}
+.image-modal-content img{
+  max-width:100%;
+  max-height:90vh;
+  object-fit:contain;
+  border-radius:12px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);
+}
+.image-modal-close{
+  position:absolute;
+  top:-40px;
+  right:0;
+  background:var(--danger);
+  color:#fff;
+  border:none;
+  width:36px;
+  height:36px;
+  border-radius:50%;
+  cursor:pointer;
+  font-size:18px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.image-modal-info{
+  position:absolute;
+  bottom:-50px;
+  left:0;
+  right:0;
+  text-align:center;
+  color:var(--text);
+  font-size:13px;
+}
+
+</style>';
     document.body.appendChild(el);
   }
   document.getElementById("loading-msg").textContent = msg || "Loading...";
@@ -1166,7 +1396,7 @@ function switchTab(tab){
   if(tab==="entries")  renderEntries();
   if(tab==="reports")  renderReports();
   if(tab==="mine")     renderMine();
-  if(tab==="entry")    renderRecent();
+  if(tab==="entry")    { renderRecent(); setupBillDragDrop(); }
   if(tab==="sale")     renderRecentSales();
   if(tab==="sales")    renderSales();
   if(tab==="users")    renderUsers();
@@ -1217,8 +1447,9 @@ async function saveEntry(){
   const amounts = {};
   amounts[cat] = amt;
 
+  const entryId = Date.now();
   const entry = {
-    id:          Date.now(),
+    id:          entryId,
     location:    currentUser.location,
     date,
     category:    cat,
@@ -1227,10 +1458,31 @@ async function saveEntry(){
     amounts,
     amount:      amt,
     enteredBy:   currentUser.name,
+    bills:       [] // Will be populated if bills are uploaded
   };
+
+  // Upload bills if any selected
+  if (selectedBills.length > 0) {
+    showLoading(`Uploading ${selectedBills.length} bill(s)...`);
+    try {
+      const billUrls = await uploadBills(entryId);
+      entry.bills = billUrls;
+      hideLoading();
+    } catch (e) {
+      console.error("Bill upload error:", e);
+      hideLoading();
+      alert("Error uploading bills. Entry will be saved without bills.");
+    }
+  }
 
   document.getElementById("e-amount").value = "";
   document.getElementById("e-note").value   = "";
+  
+  // Clear bill previews
+  selectedBills = [];
+  const previewContainer = document.getElementById('bill-preview-container');
+  if (previewContainer) previewContainer.innerHTML = '';
+  
   showToast();
   await addExpenseToFirestore(entry);
 }
@@ -1240,13 +1492,14 @@ function renderRecent(){
   const el = document.getElementById("recent-entries-table");
   if(!entries.length){ el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No entries yet</div>'; return; }
   el.innerHTML = `<div class="card table-wrap"><table>
-    <thead><tr><th>Date</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th></tr></thead>
+    <thead><tr><th>Date</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th><th>Bill</th></tr></thead>
     <tbody>${entries.map(e=>`<tr>
       <td>${e.date}</td>
       <td>${e.category||"—"}</td>
       <td style="color:var(--muted)">${e.subcategory||"—"}</td>
       <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">${PKR(e.amount||0)}</td>
       <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
+      <td>${displayBills(e)}</td>
     </tr>`).join("")}</tbody>
   </table></div>`;
 }
@@ -1254,6 +1507,19 @@ function renderRecent(){
 // ══════════════════════════════════════════════════════
 //  MY ENTRIES
 // ══════════════════════════════════════════════════════
+
+// Helper function to display bills in tables
+function displayBills(entry) {
+  if (!entry.bills || entry.bills.length === 0) {
+    return '<span class="no-bill">No bill</span>';
+  }
+  return entry.bills.map((url, idx) => 
+    `<img src="${url}" class="bill-thumbnail" 
+         onclick="openImageModal('${url}', '${entry.note} - Bill ${idx + 1}')"
+         alt="Bill ${idx + 1}"/>`
+  ).join(' ');
+}
+
 function renderMine(){
   const loc   = currentUser.location;
   const mine  = allExpenses.filter(e => e.location === loc);
@@ -1268,13 +1534,14 @@ function renderMine(){
   if(!mine.length){ el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div>No entries yet</div>'; return; }
   const TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
   el.innerHTML = `<div class="card table-wrap"><table>
-    <thead><tr><th>Date</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th><th></th></tr></thead>
+    <thead><tr><th>Date</th><th>Category</th><th>Sub-Category</th><th>Amount</th><th>Note</th><th>Bill</th><th></th></tr></thead>
     <tbody>${mine.map(e=>`<tr>
       <td>${e.date}</td>
       <td>${e.category||"—"}</td>
       <td style="color:var(--muted)">${e.subcategory||"—"}</td>
       <td style="font-family:Syne,sans-serif;font-weight:600;color:var(--accent)">${PKR(e.amount||0)}</td>
       <td style="color:var(--muted);font-size:13px">${e.note||"—"}</td>
+      <td>${displayBills(e)}</td>
       <td><button class="btn-danger" onclick="deleteEntry(${e.id})">${TRASH}</button></td>
     </tr>`).join("")}</tbody>
   </table></div>`;
@@ -1721,7 +1988,114 @@ function downloadExcelReport(){
     .sale-row { background: #f0fff4; }
     .total-row{ background: #f7fafc; font-weight: bold; }
     .section-header { background: #4a5568; color: white; font-weight: bold; font-size: 13pt; text-align: center; }
-  </style></head><body>`;
+  
+/* ── BILL UPLOAD ── */
+.bill-upload-box{
+  border:2px dashed var(--border);
+  border-radius:12px;
+  padding:28px;
+  text-align:center;
+  cursor:pointer;
+  transition:all .2s;
+  background:var(--surface2);
+}
+.bill-upload-box:hover{border-color:var(--accent);background:rgba(240,165,0,.05)}
+.bill-upload-box.drag-over{border-color:var(--accent);background:rgba(240,165,0,.1)}
+.bill-upload-icon{font-size:36px;margin-bottom:10px;color:var(--muted)}
+.bill-upload-text{color:var(--text);font-weight:500;margin-bottom:4px}
+.bill-upload-hint{color:var(--muted);font-size:12px}
+.bill-preview-container{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
+.bill-preview{
+  position:relative;
+  width:120px;
+  height:120px;
+  border-radius:10px;
+  overflow:hidden;
+  border:1px solid var(--border);
+  background:var(--surface2);
+}
+.bill-preview img{width:100%;height:100%;object-fit:cover}
+.bill-preview-remove{
+  position:absolute;
+  top:4px;
+  right:4px;
+  background:var(--danger);
+  color:#fff;
+  border:none;
+  width:22px;
+  height:22px;
+  border-radius:50%;
+  cursor:pointer;
+  font-size:12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  transition:opacity .2s;
+}
+.bill-preview-remove:hover{opacity:.8}
+.bill-thumbnail{
+  width:40px;
+  height:40px;
+  border-radius:6px;
+  object-fit:cover;
+  cursor:pointer;
+  border:1px solid var(--border);
+  transition:all .2s;
+}
+.bill-thumbnail:hover{transform:scale(1.05);border-color:var(--accent)}
+.no-bill{color:var(--muted);font-size:12px;font-style:italic}
+
+/* ── IMAGE MODAL ── */
+.image-modal{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.92);
+  z-index:300;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+}
+.image-modal.active{display:flex}
+.image-modal-content{
+  max-width:90vw;
+  max-height:90vh;
+  position:relative;
+}
+.image-modal-content img{
+  max-width:100%;
+  max-height:90vh;
+  object-fit:contain;
+  border-radius:12px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);
+}
+.image-modal-close{
+  position:absolute;
+  top:-40px;
+  right:0;
+  background:var(--danger);
+  color:#fff;
+  border:none;
+  width:36px;
+  height:36px;
+  border-radius:50%;
+  cursor:pointer;
+  font-size:18px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.image-modal-info{
+  position:absolute;
+  bottom:-50px;
+  left:0;
+  right:0;
+  text-align:center;
+  color:var(--text);
+  font-size:13px;
+}
+
+</style></head><body>`;
 
   const ECOLS     = ALL_EXPENSE_COLS;
   const eColSpan  = ECOLS.length + 5; // Date + Location + SubCat + each col + Total + Note + By
@@ -1910,7 +2284,17 @@ function downloadExcelReport(){
     html += `</table>`;
   }
 
-  html += `</body></html>`;
+  html += `
+<!-- IMAGE MODAL FOR VIEWING BILLS -->
+<div class="image-modal" id="image-modal" onclick="closeImageModal()">
+  <div class="image-modal-content" onclick="event.stopPropagation()">
+    <button class="image-modal-close" onclick="closeImageModal()">✕</button>
+    <img id="modal-image" src="" alt="Bill"/>
+    <div class="image-modal-info" id="modal-image-info"></div>
+  </div>
+</div>
+
+</body></html>`;
 
   const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
   const url  = URL.createObjectURL(blob);
@@ -2120,6 +2504,116 @@ function showToast(){
   t.style.display = "block";
   setTimeout(()=>{ t.style.display="none"; }, 2500);
 }
+
+// ══════════════════════════════════════════════════════
+//  BILL UPLOAD HANDLING
+// ══════════════════════════════════════════════════════
+function handleBillSelect(event) {
+  const files = Array.from(event.target.files);
+  files.forEach(file => {
+    if (file.size > 5 * 1024 * 1024) {
+      alert(`File ${file.name} is too large. Max 5MB per file.`);
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      alert(`File ${file.name} is not an image.`);
+      return;
+    }
+    
+    selectedBills.push(file);
+    displayBillPreview(file);
+  });
+  
+  event.target.value = '';
+}
+
+function displayBillPreview(file) {
+  const container = document.getElementById('bill-preview-container');
+  if (!container) return;
+  
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const preview = document.createElement('div');
+    preview.className = 'bill-preview';
+    preview.innerHTML = `
+      <img src="${e.target.result}" alt="${file.name}"/>
+      <button class="bill-preview-remove" onclick="removeBillPreview(this, '${file.name}')" type="button">✕</button>
+    `;
+    container.appendChild(preview);
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeBillPreview(button, fileName) {
+  selectedBills = selectedBills.filter(f => f.name !== fileName);
+  button.parentElement.remove();
+}
+
+async function uploadBills(expenseId) {
+  const uploadedUrls = [];
+  
+  for (let i = 0; i < selectedBills.length; i++) {
+    const file = selectedBills[i];
+    const fileName = `bills/${expenseId}/${Date.now()}_${i}_${file.name}`;
+    const storageRef = storage.ref(fileName);
+    
+    await storageRef.put(file);
+    const url = await storageRef.getDownloadURL();
+    uploadedUrls.push(url);
+  }
+  
+  return uploadedUrls;
+}
+
+function openImageModal(imageUrl, info) {
+  const modal = document.getElementById('image-modal');
+  if (!modal) return;
+  document.getElementById('modal-image').src = imageUrl;
+  document.getElementById('modal-image-info').textContent = info || '';
+  modal.classList.add('active');
+}
+
+function closeImageModal() {
+  const modal = document.getElementById('image-modal');
+  if (modal) modal.classList.remove('active');
+}
+
+// Setup drag and drop for bill upload
+function setupBillDragDrop() {
+  const billBox = document.getElementById('bill-upload-box');
+  if (!billBox) return;
+  
+  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+    billBox.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    }, false);
+  });
+  
+  ['dragenter', 'dragover'].forEach(eventName => {
+    billBox.addEventListener(eventName, () => {
+      billBox.classList.add('drag-over');
+    }, false);
+  });
+  
+  ['dragleave', 'drop'].forEach(eventName => {
+    billBox.addEventListener(eventName, () => {
+      billBox.classList.remove('drag-over');
+    }, false);
+  });
+  
+  billBox.addEventListener('drop', (e) => {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+    const input = document.getElementById('bill-input');
+    if (input) {
+      input.files = files;
+      handleBillSelect({ target: { files: files, value: '' } });
+    }
+  }, false);
+}
+
+
 </script>
 
 <!-- USER MODAL -->
@@ -2163,5 +2657,15 @@ function showToast(){
     </div>
   </div>
 </div>
+
+<!-- IMAGE MODAL FOR VIEWING BILLS -->
+<div class="image-modal" id="image-modal" onclick="closeImageModal()">
+  <div class="image-modal-content" onclick="event.stopPropagation()">
+    <button class="image-modal-close" onclick="closeImageModal()">✕</button>
+    <img id="modal-image" src="" alt="Bill"/>
+    <div class="image-modal-info" id="modal-image-info"></div>
+  </div>
+</div>
+
 </body>
 </html>
