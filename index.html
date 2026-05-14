@@ -736,14 +736,14 @@ const firebaseConfig = {
   appId: "1:226973057922:web:8e223329f3a7d371a7859b",
   measurementId: "G-4FM73F1CVY"
 };
-let app, db, auth;
+let app, db, auth, storage;
 
 function initFirebase(){
   try {
     app  = firebase.initializeApp(firebaseConfig);
     db   = firebase.firestore();
     auth = firebase.auth();
-    const storage = firebase.storage();
+    storage = firebase.storage();
     db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
   } catch(e) {
     if(e.code !== 'app/duplicate-app'){
@@ -753,7 +753,7 @@ function initFirebase(){
       app  = firebase.app();
       db   = firebase.firestore();
       auth = firebase.auth();
-    const storage = firebase.storage();
+      storage = firebase.storage();
     }
   }
   return true;
