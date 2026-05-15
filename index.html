@@ -1362,32 +1362,70 @@ async function saveEntry(){
     bills:       [] // Will be populated if bills uploaded
   };
 
-  // Upload bills if any selected
+  // Bills are OPTIONAL, BUT if user selected files, upload MUST succeed
   if (selectedBills.length > 0) {
+    showLoading(`Uploading ${selectedBills.length} bill(s)...`);
     try {
       const billUrls = await uploadBills(entryId);
       entry.bills = billUrls;
+      console.log("✓ Bills uploaded successfully:", billUrls);
     } catch (e) {
-      console.error("Bill upload error:", e);
+      console.error("✗ Bill upload failed:", e);
       hideLoading();
-      errEl.textContent = "Error uploading bills. Entry will be saved without bills.";
+      
+      // Show detailed error message
+      let errorMsg = "Bill upload failed! ";
+      if (e.code === 'storage/unauthorized') {
+        errorMsg += "Storage permission denied. Please contact admin to fix Firebase Storage rules.";
+      } else if (e.message) {
+        errorMsg += e.message;
+      } else {
+        errorMsg += "Unknown error. Check console for details.";
+      }
+      
+      errEl.textContent = errorMsg;
       errEl.style.display = "block";
-      setTimeout(() => errEl.style.display = "none", 3000);
+      
+      // Alert for visibility
+      alert("❌ BILL UPLOAD FAILED!\n\nYou selected bills but upload failed.\n\n" + errorMsg + "\n\nEntry NOT saved.\n\nOptions:\n1. Remove bills and save without them\n2. Fix the issue and try again");
+      
+      // DO NOT save entry if user selected bills but upload failed
+      return;
     }
   }
 
-  // Clear form
-  document.getElementById("e-amount").value = "";
-  document.getElementById("e-note").value   = "";
-  
-  // Clear bill previews
-  selectedBills = [];
-  const previewContainer = document.getElementById('bill-preview-container');
-  if (previewContainer) previewContainer.innerHTML = '';
-  
-  await addExpenseToFirestore(entry);
-  hideLoading();
-  showToast();
+  // Save entry to Firestore
+  // - If no bills selected: saves without bills (normal)
+  // - If bills selected and uploaded: saves with bills
+  // - If bills selected but failed: doesn't reach here (returned above)
+  try {
+    showLoading("Saving to database...");
+    await addExpenseToFirestore(entry);
+    
+    // Clear form only after successful save
+    document.getElementById("e-amount").value = "";
+    document.getElementById("e-note").value   = "";
+    
+    // Clear bill previews
+    selectedBills = [];
+    const previewContainer = document.getElementById('bill-preview-container');
+    if (previewContainer) previewContainer.innerHTML = '';
+    
+    hideLoading();
+    
+    // Show success message
+    if (entry.bills.length > 0) {
+      showSuccessPopup(`✅ Entry saved with ${entry.bills.length} bill(s)!`);
+    } else {
+      showToast();
+    }
+    
+  } catch (e) {
+    hideLoading();
+    console.error("Entry save error:", e);
+    errEl.textContent = "Error saving entry to database: " + (e.message || "Please try again.");
+    errEl.style.display = "block";
+  }
 }
 
 function renderRecent(){
