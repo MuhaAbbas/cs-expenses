@@ -1992,18 +1992,43 @@ async function saveUserModal(){
   if(role !== "admin" && !location){ errEl.textContent="Please select a location."; errEl.style.display="block"; return; }
   if(!password||password.length<4){ errEl.textContent="Password must be at least 4 characters."; errEl.style.display="block"; return; }
   showLoading("Saving user...");
+  
+  // Save current admin user's auth state
+  const adminUser = auth.currentUser;
+  
   try{
     const users = await loadUsers();
     if(users.find(u=>u.id===username)){ hideLoading(); errEl.textContent="Username already exists."; errEl.style.display="block"; return; }
+    
     // Create Firebase Auth account
     const email = username + "@cnc-expenses.app";
-    await auth.createUserWithEmailAndPassword(email, password);
+    
+    // Create secondary auth instance to avoid logging out admin
+    const secondaryApp = firebase.app();
+    const secondaryAuth = firebase.auth(secondaryApp);
+    
+    // Create user without affecting current admin session
+    const userCredential = await secondaryAuth.createUserWithEmailAndPassword(email, password);
+    
+    // Immediately sign out from secondary auth
+    await secondaryAuth.signOut();
+    
     // Save user profile to Firestore
     users.push({ id:username, name, role, location: role==="admin" ? null : location, email });
     await saveUsers(users);
+    
+    hideLoading();
     closeUserModal();
+    
+    // Show success popup
+    showSuccessPopup("User added successfully!");
+    
+    // Refresh user list
+    await loadData();
     renderUsers();
+    
   }catch(e){
+    hideLoading();
     if(e.code === "auth/email-already-in-use"){
       errEl.textContent="Username already exists in Auth.";
     } else {
@@ -2011,7 +2036,6 @@ async function saveUserModal(){
     }
     errEl.style.display="block";
   }
-  hideLoading();
 }
 
 async function promoteToAdmin(uid){
@@ -2120,6 +2144,14 @@ function showToast(){
   t.style.display = "block";
   setTimeout(()=>{ t.style.display="none"; }, 2500);
 }
+
+function showSuccessPopup(message){
+  const popup = document.getElementById("success-popup");
+  const msg = document.getElementById("success-popup-msg");
+  msg.textContent = message;
+  popup.style.display = "flex";
+  setTimeout(()=>{ popup.style.display="none"; }, 3000);
+}
 </script>
 
 <!-- USER MODAL -->
@@ -2163,5 +2195,23 @@ function showToast(){
     </div>
   </div>
 </div>
+
+<!-- SUCCESS POPUP -->
+<div id="success-popup" style="display:none;position:fixed;inset:0;z-index:300;align-items:center;justify-content:center;background:rgba(0,0,0,0.5)">
+  <div style="background:#161920;border:2px solid #22c97a;border-radius:16px;padding:40px;text-align:center;min-width:320px;animation:popupBounce 0.4s ease-out">
+    <div style="font-size:64px;margin-bottom:16px">✅</div>
+    <div id="success-popup-msg" style="font-family:Syne,sans-serif;font-size:20px;font-weight:700;color:#22c97a;margin-bottom:8px">User Added Successfully!</div>
+    <div style="color:#6b7280;font-size:14px">Admin session maintained</div>
+  </div>
+</div>
+
+<style>
+@keyframes popupBounce {
+  0% { transform: scale(0.7); opacity: 0; }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); opacity: 1; }
+}
+</style>
+
 </body>
 </html>
