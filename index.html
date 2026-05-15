@@ -1993,25 +1993,35 @@ async function saveUserModal(){
   if(!password||password.length<4){ errEl.textContent="Password must be at least 4 characters."; errEl.style.display="block"; return; }
   showLoading("Saving user...");
   
-  // Save current admin user's auth state
-  const adminUser = auth.currentUser;
-  
   try{
     const users = await loadUsers();
-    if(users.find(u=>u.id===username)){ hideLoading(); errEl.textContent="Username already exists."; errEl.style.display="block"; return; }
+    if(users.find(u=>u.id===username)){ 
+      hideLoading(); 
+      errEl.textContent="Username already exists."; 
+      errEl.style.display="block"; 
+      return; 
+    }
     
-    // Create Firebase Auth account
+    // Save current admin credentials to restore later
+    const currentAdminEmail = auth.currentUser.email;
+    const currentAdminPassword = prompt("For security, please enter YOUR admin password to continue:");
+    
+    if(!currentAdminPassword){
+      hideLoading();
+      errEl.textContent="Password required to create user.";
+      errEl.style.display="block";
+      return;
+    }
+    
+    // Create Firebase Auth account (this will log out current user)
     const email = username + "@cnc-expenses.app";
+    await auth.createUserWithEmailAndPassword(email, password);
     
-    // Create secondary auth instance to avoid logging out admin
-    const secondaryApp = firebase.app();
-    const secondaryAuth = firebase.auth(secondaryApp);
+    // Immediately sign out the new user
+    await auth.signOut();
     
-    // Create user without affecting current admin session
-    const userCredential = await secondaryAuth.createUserWithEmailAndPassword(email, password);
-    
-    // Immediately sign out from secondary auth
-    await secondaryAuth.signOut();
+    // Sign back in as admin
+    await auth.signInWithEmailAndPassword(currentAdminEmail, currentAdminPassword);
     
     // Save user profile to Firestore
     users.push({ id:username, name, role, location: role==="admin" ? null : location, email });
@@ -2031,6 +2041,8 @@ async function saveUserModal(){
     hideLoading();
     if(e.code === "auth/email-already-in-use"){
       errEl.textContent="Username already exists in Auth.";
+    } else if(e.code === "auth/wrong-password"){
+      errEl.textContent="Incorrect admin password.";
     } else {
       errEl.textContent="Error saving user: " + (e.message||"Try again.");
     }
