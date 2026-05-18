@@ -1100,7 +1100,15 @@ async function initApp(){
 // ══════════════════════════════════════════════════════
 function saveSession(u){ localStorage.setItem("cnc_session", JSON.stringify(u)); }
 function clearSession(){ localStorage.removeItem("cnc_session"); }
-function getSession(){ try{ const s=localStorage.getItem("cnc_session"); return s?JSON.parse(s):null; }catch{ return null; } }
+function getSession(){ 
+  try{ 
+    const s = localStorage.getItem("cnc_session"); 
+    return s ? JSON.parse(s) : null; 
+  } catch(e) { 
+    console.error("Session parse error:", e);
+    return null; 
+  } 
+}
 
 // ══════════════════════════════════════════════════════
 //  AUTH
