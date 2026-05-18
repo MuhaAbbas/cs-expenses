@@ -723,45 +723,37 @@ tr:hover td{background:var(--surface2)}
 <!-- TOAST -->
 <div class="toast" id="toast">✓ Entry saved successfully!</div>
 
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+<!-- ⚡ SUPABASE CLIENT LIBRARY -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 // ══════════════════════════════════════════════════════
 //  FIREBASE CONFIG
 // ══════════════════════════════════════════════════════
-const firebaseConfig = {
-  apiKey: "AIzaSyAmQVtc4Io1qBgFhK6W7YoaD79RIIAVE3g",
-  authDomain: "cs-expenses.firebaseapp.com",
-  projectId: "cs-expenses",
-  storageBucket: "cs-expenses.firebasestorage.app",
-  messagingSenderId: "226973057922",
-  appId: "1:226973057922:web:8e223329f3a7d371a7859b",
-  measurementId: "G-4FM73F1CVY"
-};
-let app, db, auth, storage;
-let selectedBills = []; // For bill upload
+const SUPABASE_URL = 'https://xqljemuoobwxgdudznfh.supabase.co';  // ✅ Complete URL
+const SUPABASE_KEY = 'sb_publishable_TDKX2yu5Ze6CPyGL5clBGw_mHuDcJVE';     // ⚠️ Yahan apni Publishable Key dalein
 
-function initFirebase(){
+let supabase;
+let dbConnected = false;
+let selectedBills = [];
+
+try {
+  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  console.log('✓ Supabase initialized');
+  testConnection();
+} catch (error) {
+  console.error('Supabase init error:', error);
+}
+
+async function testConnection() {
   try {
-    app  = firebase.initializeApp(firebaseConfig);
-    db   = firebase.firestore();
-    auth = firebase.auth();
-    storage = firebase.storage();
-    db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
-  } catch(e) {
-    if(e.code !== 'app/duplicate-app'){
-      console.error('Firebase init error:', e);
-      return false;
-    } else {
-      app  = firebase.app();
-      db   = firebase.firestore();
-      auth = firebase.auth();
-      storage = firebase.storage();
-    }
+    const { error } = await supabase.from('settings').select('key').limit(1);
+    if (error && error.code !== 'PGRST116') throw error;
+    dbConnected = true;
+    console.log('✓ Database connected');
+  } catch (error) {
+    console.error('❌ DB connection failed:', error);
+    dbConnected = false;
   }
-  return true;
 }
 
 // ══════════════════════════════════════════════════════
@@ -877,35 +869,35 @@ function hideLoading(){
 // ══════════════════════════════════════════════════════
 async function loadUsers(){
   try{
-    const snap = await db.collection("settings").doc("users").get();
-    if(snap.exists && snap.data().list) return snap.data().list;
-    await db.collection("settings").doc("users").set({ list: DEFAULT_USERS });
-    await db.collection("settings").doc("passwords").set({ map: DEFAULT_PASSWORDS });
+    const snap = await supabase.from('settings').select('value').eq('key', 'users').maybeSingle();
+    if(data && data.value) return snap.data().list;
+    await supabase.from('settings').upsert({ key: 'users', value: DEFAULT_USERS });
+    await supabase.from('settings').upsert({ key: 'passwords', value: DEFAULT_PASSWORDS });
     return DEFAULT_USERS;
   }catch(e){ console.error(e); return DEFAULT_USERS; }
 }
-async function saveUsers(arr){ await db.collection("settings").doc("users").set({ list: arr }); }
+async function saveUsers(arr){ await supabase.from('settings').upsert({ key: 'users', value: arr }); }
 async function loadPasswords(){
   try{
-    const snap = await db.collection("settings").doc("passwords").get();
-    if(snap.exists && snap.data().map) return snap.data().map;
-    await db.collection("settings").doc("passwords").set({ map: DEFAULT_PASSWORDS });
+    const snap = await supabase.from('settings').select('value').eq('key', 'passwords').maybeSingle();
+    if(snap.exists && data.value) return data.value;
+    await supabase.from('settings').upsert({ key: 'passwords', value: DEFAULT_PASSWORDS });
     return DEFAULT_PASSWORDS;
   }catch(e){ return {}; }
 }
-async function savePasswords(obj){ await db.collection("settings").doc("passwords").set({ map: obj }); }
-async function addExpenseToFirestore(entry){ await db.collection("expenses").doc(String(entry.id)).set(entry); }
-async function deleteExpenseFromFirestore(id){ await db.collection("expenses").doc(String(id)).delete(); }
+async function savePasswords(obj){ await supabase.from('settings').upsert({ key: 'passwords', value: obj }); }
+async function addExpenseToFirestore(entry){ await supabase.from('expenses').upsert({ id: String(entry.id), location: entry.location, category: entry.category, subcategory: entry.subcategory, amount: entry.amount, date: entry.date, note: entry.note, entered_by: entry.enteredBy, bills: entry.bills || [], data: entry }); }
+async function deleteExpenseFromFirestore(id){ await supabase.from('expenses').delete().eq('id', String(id)); }
 
 // ── Cash In Hand helpers ──
 async function loadOpeningCash(){
   try{
-    const snap = await db.collection("settings").doc("openingCash").get();
-    if(snap.exists) return snap.data();
+    const snap = await supabase.from('settings').select('value').eq('key', 'openingCash').maybeSingle();
+    if(data) return data.value;
     return { "Shop": 0, "Karachi Office": 0 };
   }catch(e){ return { "Shop": 0, "Karachi Office": 0 }; }
 }
-async function saveOpeningCash(obj){ await db.collection("settings").doc("openingCash").set(obj); }
+async function saveOpeningCash(obj){ await supabase.from('settings').upsert({ key: 'openingCash', value: obj }); }
 
 // Calculate cash in hand for a location up to a date
 function calcCashInHand(loc, upToDate){
@@ -919,13 +911,21 @@ function calcCashInHand(loc, upToDate){
   return opening + cashSales - expenses;
 }
 
-async function addSaleToFirestore(sale){ await db.collection("sales").doc(String(sale.id)).set(sale); }
-async function deleteSaleFromFirestore(id){ await db.collection("sales").doc(String(id)).delete(); }
+async function addSaleToFirestore(sale){ await supabase.from('sales').upsert({ id: String(sale.id), location: sale.location, customer: sale.customer, amount: sale.amount, payment: sale.payment, date: sale.date, note: sale.note, entered_by: sale.enteredBy, data: sale }); }
+async function deleteSaleFromFirestore(id){ await supabase.from('sales').delete().eq('id', String(id)); }
 
 function subscribeSales(){
+  loadSalesFromSupabase();
+  const channel = supabase.channel('sales_changes').on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => loadSalesFromSupabase()).subscribe();
+  return () => supabase.removeChannel(channel);
+}
+function subscribeSalesOLD(){
   if(unsubSales) unsubSales();
-  unsubSales = db.collection("sales").orderBy("date","desc").onSnapshot(snap => {
-    allSales = snap.docs.map(d => d.data());
+  unsubSales = async function loadSalesFromSupabase(){
+  try{
+    const { data, error } = await supabase.from('sales').select('*').order('date', { ascending: false });
+    if (error) throw error;
+    allSales = (data || []).map(row => row.data || row);
     if(currentTab==="sales") renderSales();
     if(currentTab==="sale")  renderRecentSales();
     if(currentTab==="dash")  renderDash();
@@ -1042,17 +1042,33 @@ async function deleteSale(id){
 }
 
 function subscribeExpenses(){
+  loadExpensesFromSupabase();
+  const channel = supabase.channel('expenses_changes').on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => loadExpensesFromSupabase()).subscribe();
+  return () => supabase.removeChannel(channel);
+}
+function subscribeExpensesOLD(){
   if(unsubExpenses) unsubExpenses();
-  unsubExpenses = db.collection("expenses").orderBy("date","desc").onSnapshot(snap => {
-    allExpenses = snap.docs.map(d => d.data());
+  unsubExpenses = async function loadExpensesFromSupabase(){
+  try{
+    const { data, error } = await supabase.from('expenses').select('*').order('date', { ascending: false });
+    if (error) throw error;
+    allExpenses = (data || []).map(row => row.data || row);
     refreshCurrentTab();
   }, err => { console.error("Firestore expenses error:", err); });
 }
 
 function subscribeSales(){
+  loadSalesFromSupabase();
+  const channel = supabase.channel('sales_changes').on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => loadSalesFromSupabase()).subscribe();
+  return () => supabase.removeChannel(channel);
+}
+function subscribeSalesOLD(){
   if(unsubSales) unsubSales();
-  unsubSales = db.collection("sales").orderBy("date","desc").onSnapshot(snap => {
-    allSales = snap.docs.map(d => d.data());
+  unsubSales = async function loadSalesFromSupabase(){
+  try{
+    const { data, error } = await supabase.from('sales').select('*').order('date', { ascending: false });
+    if (error) throw error;
+    allSales = (data || []).map(row => row.data || row);
     refreshCurrentTab();
   }, err => { console.error("Firestore sales error:", err); });
 }
@@ -1066,6 +1082,17 @@ function refreshCurrentTab(){
   if(currentTab==="entry")   renderRecent();
   if(currentTab==="sale")    renderRecentSales();
   if(currentTab==="sales")   renderSales();
+}
+
+
+async function initApp(){
+  openingCash = await loadOpeningCash();
+  unsubExpenses = subscribeExpenses();
+  unsubSales = subscribeSales();
+  
+  document.getElementById("nav-user").textContent = currentUser.name;
+  const initTab = (currentUser.role==="admin") ? "dash" : (currentUser.location ? "entry" : "dash");
+  showTab(initTab);
 }
 
 // ══════════════════════════════════════════════════════
@@ -1093,7 +1120,53 @@ function togglePw(){
   }
 }
 
+
 async function doLogin(){
+  const username = document.getElementById("login-user").value.trim();
+  const pw       = document.getElementById("login-pw").value;
+  const err      = document.getElementById("login-err");
+  
+  err.style.display = "none";
+  if(!username || !pw){ 
+    err.textContent="Please enter username and password."; 
+    err.style.display="block"; 
+    return; 
+  }
+  
+  showLoading("Signing in...");
+  
+  try{
+    const users = await loadUsers();
+    const passwords = await loadPasswords();
+    
+    const user = users.find(u => u.id === username);
+    
+    if(!user || passwords[username] !== pw){
+      hideLoading();
+      err.textContent = "Incorrect username or password.";
+      err.style.display = "block";
+      return;
+    }
+    
+    // Login successful
+    currentUser = user;
+    saveSession(user);
+    document.getElementById("login-screen").style.display = "none";
+    document.getElementById("app-screen").style.display   = "flex";
+    document.getElementById("login-pw").value   = "";
+    document.getElementById("login-user").value = "";
+    
+    await initApp();
+    hideLoading();
+  }catch(e){
+    hideLoading();
+    console.error("Login error:", e);
+    err.textContent = "Login error. Try again.";
+    err.style.display = "block";
+  }
+}
+
+async function doLoginOLD(){
   const input = document.getElementById("login-user").value.trim();
   const pw    = document.getElementById("login-pw").value;
   const err   = document.getElementById("login-err");
@@ -1101,7 +1174,7 @@ async function doLogin(){
   if(!input || !pw){ err.textContent="Please enter email and password."; err.style.display="block"; return; }
   showLoading("Signing in...");
   try{
-    await auth.signInWithEmailAndPassword(input, pw);
+    // Simple auth - check below;
     // onAuthStateChanged handles the rest
   }catch(e){
     hideLoading();
@@ -1127,14 +1200,14 @@ async function doLogout(){
   currentUser  = null;
   allExpenses  = [];
   currentTab   = "";
-  await auth.signOut();
+  // Logout handled;
   document.getElementById("app-screen").style.display   = "none";
   document.getElementById("login-screen").style.display = "flex";
 }
 
 // Firebase Auth state observer — single source of truth for login/logout
 function startAuthObserver(){
-  auth.onAuthStateChanged(async (firebaseUser) => {
+  // Auth observer disabled(async (firebaseUser) => {
     if(!firebaseUser){
       hideLoading();
       return;
@@ -1186,7 +1259,7 @@ function startAuthObserver(){
       const err = document.getElementById("login-err");
       err.textContent = "Login error. Try again.";
       err.style.display = "block";
-      await auth.signOut();
+      // Logout handled;
       clearSession();
     }
     hideLoading();
@@ -1194,9 +1267,9 @@ function startAuthObserver(){
 }
 
 window.addEventListener("load", () => {
-  const ok = initFirebase();
-  if(!ok){
-    document.getElementById("login-err").textContent = "Firebase failed to load. Refresh the page.";
+  const ok = dbConnected;
+  if(!dbConnected){
+    document.getElementById("login-err").textContent = "⚠️ Check Supabase configuration (URL & Key). Refresh the page.";
     document.getElementById("login-err").style.display = "block";
     return;
   }
@@ -1216,15 +1289,21 @@ async function initApp(){
     const tryResolve = () => { if(expLoaded && salesLoaded) resolve(); };
 
     if(unsubExpenses) unsubExpenses();
-    unsubExpenses = db.collection("expenses").orderBy("date","desc").onSnapshot(snap => {
-      allExpenses = snap.docs.map(d => d.data());
+    unsubExpenses = async function loadExpensesFromSupabase(){
+  try{
+    const { data, error } = await supabase.from('expenses').select('*').order('date', { ascending: false });
+    if (error) throw error;
+    allExpenses = (data || []).map(row => row.data || row);
       if(!expLoaded){ expLoaded = true; tryResolve(); }
       else refreshCurrentTab();
     }, err => { console.error("Firestore expenses error:", err); expLoaded = true; tryResolve(); });
 
     if(unsubSales) unsubSales();
-    unsubSales = db.collection("sales").orderBy("date","desc").onSnapshot(snap => {
-      allSales = snap.docs.map(d => d.data());
+    unsubSales = async function loadSalesFromSupabase(){
+  try{
+    const { data, error } = await supabase.from('sales').select('*').order('date', { ascending: false });
+    if (error) throw error;
+    allSales = (data || []).map(row => row.data || row);
       if(!salesLoaded){ salesLoaded = true; tryResolve(); }
       else refreshCurrentTab();
     }, err => { console.error("Firestore sales error:", err); salesLoaded = true; tryResolve(); });
@@ -2229,7 +2308,7 @@ async function confirmAdminPassword(){
     await auth.createUserWithEmailAndPassword(email, password);
     
     // Immediately sign out the new user
-    await auth.signOut();
+    // Logout handled;
     
     // Sign back in as admin
     await auth.signInWithEmailAndPassword(currentAdminEmail, adminPassword);
@@ -2440,12 +2519,30 @@ async function uploadBills(expenseId) {
   
   for (let i = 0; i < selectedBills.length; i++) {
     const file = selectedBills[i];
-    const fileName = `bills/${expenseId}/${Date.now()}_${i}_${file.name}`;
-    const storageRef = storage.ref(fileName);
+    const fileExt = file.name.split('.').pop();
+    const fileName = `bills/${expenseId}/${Date.now()}_${i}.${fileExt}`;
     
-    await storageRef.put(file);
-    const url = await storageRef.getDownloadURL();
-    uploadedUrls.push(url);
+    try {
+      // Upload to Supabase Storage
+      const { data, error } = await supabase.storage
+        .from('expense-bills')
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: false
+        });
+      
+      if (error) throw error;
+      
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('expense-bills')
+        .getPublicUrl(fileName);
+      
+      uploadedUrls.push(urlData.publicUrl);
+    } catch (error) {
+      console.error('Bill upload error:', error);
+      throw error;
+    }
   }
   
   return uploadedUrls;
