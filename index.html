@@ -1206,74 +1206,41 @@ async function doLogout(){
 }
 
 // Firebase Auth state observer — single source of truth for login/logout
-function startAuthObserver(){
-  // Auth observer disabled(async (firebaseUser) => {
-    if(!firebaseUser){
-      hideLoading();
-      return;
-    }
-    try{
-      showLoading("Loading...");
-      const users = await loadUsers();
+// ══════════════════════════════════════════════════════
+//  SESSION RESTORE (Removed Firebase Auth Observer)
+// ══════════════════════════════════════════════════════
+// Firebase auth observer has been removed - using simple localStorage session restore instead
+// See window.addEventListener("load") above for session restore logic
 
-      // Find user by email or by username format
-      let user = users.find(u => u.email && u.email === firebaseUser.email);
-      if(!user){
-        const uid = firebaseUser.email.replace("@cnc-expenses.app","");
-        user = users.find(u => u.id === uid);
-      }
-
-      // Auto-create profile if not found
-      if(!user){
-        const isFirstUser = users.length === 0;
-        const isAbbasAdmin = firebaseUser.email === "abbasnazeer2@gmail.com";
-        const newUser = {
-          id:       firebaseUser.uid,
-          name:     (isAbbasAdmin) ? "Abbas Nazeer" : (firebaseUser.displayName || firebaseUser.email.split("@")[0]),
-          role:     (isFirstUser || isAbbasAdmin) ? "admin" : "user",
-          location: null,
-          email:    firebaseUser.email
-        };
-        users.push(newUser);
-        await saveUsers(users);
-        user = newUser;
-      }
-
-      // Force admin role for abbasnazeer2@gmail.com always
-      if(user.email === "abbasnazeer2@gmail.com" && user.role !== "admin"){
-        user.role = "admin";
-        const allUsers = await loadUsers();
-        const idx = allUsers.findIndex(u => u.email === "abbasnazeer2@gmail.com");
-        if(idx !== -1){ allUsers[idx].role = "admin"; await saveUsers(allUsers); }
-      }
-
-      currentUser = user;
-      saveSession(user);
-      document.getElementById("login-screen").style.display = "none";
-      document.getElementById("app-screen").style.display   = "flex";
-      document.getElementById("login-pw").value   = "";
-      document.getElementById("login-user").value = "";
-      await initApp();
-    }catch(e){
-      console.error("Auth state error:", e);
-      const err = document.getElementById("login-err");
-      err.textContent = "Login error. Try again.";
-      err.style.display = "block";
-      // Logout handled;
-      clearSession();
-    }
-    hideLoading();
-  });
-}
-
-window.addEventListener("load", () => {
+window.addEventListener("load", async () => {
   const ok = dbConnected;
   if(!dbConnected){
     document.getElementById("login-err").textContent = "⚠️ Check Supabase configuration (URL & Key). Refresh the page.";
     document.getElementById("login-err").style.display = "block";
     return;
   }
-  startAuthObserver();
+  
+  // Check for saved session and restore
+  const sess = getSession();
+  if(sess){
+    showLoading("Restoring session...");
+    try{
+      const users = await loadUsers();
+      const user = users.find(u => u.id === sess.id);
+      if(user){
+        currentUser = user;
+        document.getElementById("login-screen").style.display = "none";
+        document.getElementById("app-screen").style.display   = "flex";
+        await initApp();
+      } else {
+        clearSession();
+      }
+    }catch(e){ 
+      console.error("Session restore error:", e);
+      clearSession(); 
+    }
+    hideLoading();
+  }
 });
 
 // ══════════════════════════════════════════════════════
