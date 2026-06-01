@@ -1,5 +1,5 @@
 const SUPABASE_URL = 'https://brxwfnojgvjnttayblva.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_qT-YSjbqf00FWBU17QuoCA_noOT1...';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyeHdmbm9qZ3ZqbnR0YXlibHZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMTc1OTUsImV4cCI6MjA5NTg5MzU5NX0.JN5njK2Pac-nrM6ndxscNqlUoyJ8IMk6bhcnYGY7S9E';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
