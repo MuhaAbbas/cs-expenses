@@ -3,7 +3,7 @@
 // Fixed version with proper filter formatting
 
 const SUPABASE_URL = 'https://brxwfnojgvjnttayblva.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_qT-YSjbqf00FWBU17QuoCA_noOT1...';
+const SUPABASE_KEY = 'sb_publishable_qT-YSjbqf00FWBUI7QUoCA_noOT1WzU';
 
 export default async function handler(req, res) {
   // CORS headers
