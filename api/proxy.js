@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const SUPABASE_URL = 'https://brxwfnojgvjnttayblva.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyeHdmbm9qZ3ZqbnR0YXlibHZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDI1NTMyNDksImV4cCI6MTcxODExNTI0OX0.J6W8n1Z2-cZ0zDt5bYx6K-JrZqZ2f2f2f2f2f2f2';
+const SUPABASE_KEY = 'sb_publishable_qT-YSjbqf00FWBUI7QUoCA_noOT1WzU';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
